@@ -116,6 +116,73 @@ func TestCheckOptionalUpdateUsesCache(t *testing.T) {
 	}
 }
 
+func TestCheckFailsClosedWhenChecksumCannotBeVerified(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		checksum   string
+	}{
+		{
+			name:       "unavailable",
+			statusCode: http.StatusServiceUnavailable,
+		},
+		{
+			name:       "missing",
+			statusCode: http.StatusOK,
+			checksum:   strings.Repeat("a", 64) + "  another-file.tar.gz\n",
+		},
+		{
+			name:       "malformed",
+			statusCode: http.StatusOK,
+			checksum:   "not-a-sha256  %s\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CACHE_HOME", t.TempDir())
+			t.Setenv("TNR_MIN_VERSION_URL", "")
+
+			plat := detectPlatform()
+			version := "9.9.9"
+			assetName := targetArchiveName(version, plat.OS)
+			var serverURL string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/latest.json" {
+					_ = json.NewEncoder(w).Encode(Manifest{
+						Version: version,
+						Assets: map[string]string{
+							fmt.Sprintf("%s/%s", plat.OS, plat.Arch): serverURL + "/" + assetName,
+							"checksums":                              serverURL + "/checksums.txt",
+						},
+					})
+					return
+				}
+				w.WriteHeader(tt.statusCode)
+				if tt.statusCode == http.StatusOK {
+					fmt.Fprint(w, strings.ReplaceAll(tt.checksum, "%s", assetName))
+				}
+			}))
+			defer srv.Close()
+			serverURL = srv.URL
+
+			originalDownloadBase := githubReleaseDownloadBaseURL
+			githubReleaseDownloadBaseURL = srv.URL
+			defer func() { githubReleaseDownloadBaseURL = originalDownloadBase }()
+			t.Setenv("TNR_LATEST_URL", srv.URL+"/latest.json")
+
+			_, err := Check(context.Background(), "1.0.0", true)
+			if err == nil {
+				t.Fatal("Check succeeded without a verifiable checksum")
+			}
+			if !strings.Contains(err.Error(), "fetch checksum") {
+				t.Fatalf("Check error = %q, want checksum failure", err)
+			}
+		})
+	}
+}
+
 func TestOptionalUpdateCacheHelpers(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

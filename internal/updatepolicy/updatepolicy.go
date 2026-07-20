@@ -3,6 +3,7 @@ package updatepolicy
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,10 +36,10 @@ const (
 	cacheTTL = 24 * time.Hour
 
 	minVersionEnvKey = "TNR_MIN_VERSION_URL"
-
 )
 
 var githubReleasesLatestURL = "https://api.github.com/repos/Thunder-Compute/thunder-cli/releases/latest"
+var githubReleaseDownloadBaseURL = "https://github.com/Thunder-Compute/thunder-cli/releases/download"
 
 // setGitHubReleasesURL overrides the GitHub API URL (for testing).
 func setGitHubReleasesURL(url string) { githubReleasesLatestURL = url }
@@ -104,10 +105,11 @@ func Check(ctx context.Context, currentVersion string, force bool) (Result, erro
 	}
 
 	expectedChecksum, usedURL, err := fetchChecksum(ctx, manifest.Version, platform.OS, candidates, force)
-	if err == nil {
-		res.ExpectedSHA256 = expectedChecksum
-		res.ChecksumURL = usedURL
+	if err != nil {
+		return res, fmt.Errorf("fetch checksum: %w", err)
 	}
+	res.ExpectedSHA256 = expectedChecksum
+	res.ChecksumURL = usedURL
 	debugf("asset: %s", res.AssetURL)
 	if res.ChecksumURL != "" && res.ExpectedSHA256 != "" {
 		debugf("checksums: %s (sha256=%s)", res.ChecksumURL, res.ExpectedSHA256)
@@ -432,7 +434,14 @@ func parseChecksum(data, target string) (string, error) {
 		}
 		name := parts[len(parts)-1]
 		if name == target || strings.HasSuffix(name, "/"+target) || strings.HasSuffix(name, "\\"+target) {
-			return parts[0], nil
+			checksum := strings.TrimSpace(parts[0])
+			if len(checksum) != sha256HexLength {
+				return "", fmt.Errorf("invalid SHA-256 checksum for %s", target)
+			}
+			if _, err := hex.DecodeString(checksum); err != nil {
+				return "", fmt.Errorf("invalid SHA-256 checksum for %s: %w", target, err)
+			}
+			return strings.ToLower(checksum), nil
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -440,6 +449,8 @@ func parseChecksum(data, target string) (string, error) {
 	}
 	return "", fmt.Errorf("%w: %s", errChecksumNotFound, target)
 }
+
+const sha256HexLength = 64
 
 // -------- Helpers --------
 
@@ -542,8 +553,8 @@ func githubAssetAndChecksum(version string, p platform) (assetURL, checksumURL s
 		fileOS = "darwin"
 	}
 	assetURL = fmt.Sprintf(
-		"https://github.com/Thunder-Compute/thunder-cli/releases/download/%s/tnr_%s_%s_%s%s",
-		tag, fileVersion, fileOS, p.Arch, p.Ext,
+		"%s/%s/tnr_%s_%s_%s%s",
+		strings.TrimSuffix(githubReleaseDownloadBaseURL, "/"), tag, fileVersion, fileOS, p.Arch, p.Ext,
 	)
 	checkName := "checksums.txt"
 	switch p.OS {
@@ -555,8 +566,8 @@ func githubAssetAndChecksum(version string, p platform) (assetURL, checksumURL s
 		checkName = "checksums-windows.txt"
 	}
 	checksumURL = fmt.Sprintf(
-		"https://github.com/Thunder-Compute/thunder-cli/releases/download/%s/%s",
-		tag, checkName,
+		"%s/%s/%s",
+		strings.TrimSuffix(githubReleaseDownloadBaseURL, "/"), tag, checkName,
 	)
 	return
 }
