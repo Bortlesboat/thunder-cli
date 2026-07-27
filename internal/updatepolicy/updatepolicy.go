@@ -35,6 +35,10 @@ const (
 
 	cacheTTL = 24 * time.Hour
 
+	// Failures to resolve a checksum are cached far more briefly than successes, so
+	// a release that republishes checksums.txt is picked up without a day's wait.
+	negativeChecksumCacheTTL = 1 * time.Hour
+
 	minVersionEnvKey = "TNR_MIN_VERSION_URL"
 )
 
@@ -58,6 +62,14 @@ type Result struct {
 	AssetURL       string
 	ChecksumURL    string
 	ExpectedSHA256 string
+
+	// ChecksumUnavailable reports that an update exists but its checksum could not
+	// be resolved, so the update must not be installed. ChecksumError carries why.
+	// Whether an update *exists* is deliberately not conditioned on this — callers
+	// still get to tell the user about the new version and point them at a manual
+	// download. autoupdate.PerformUpdate refuses an unverifiable archive on its own.
+	ChecksumUnavailable bool
+	ChecksumError       error
 }
 
 // Check evaluates whether the CLI needs to update, using cached metadata when possible.
@@ -98,22 +110,7 @@ func Check(ctx context.Context, currentVersion string, force bool) (Result, erro
 	}
 
 	res.AssetURL = assetURL
-	candidates := checksumCandidates(checksumURL, assetURL, manifest.Version, platform.OS)
-	// Always include the GitHub OS-specific checksum as an additional candidate
-	if _, ghChecksum := githubAssetAndChecksum(manifest.Version, platform); ghChecksum != "" {
-		candidates = append(candidates, ghChecksum)
-	}
-
-	expectedChecksum, usedURL, err := fetchChecksum(ctx, manifest.Version, platform.OS, candidates, force)
-	if err != nil {
-		return res, fmt.Errorf("fetch checksum: %w", err)
-	}
-	res.ExpectedSHA256 = expectedChecksum
-	res.ChecksumURL = usedURL
 	debugf("asset: %s", res.AssetURL)
-	if res.ChecksumURL != "" && res.ExpectedSHA256 != "" {
-		debugf("checksums: %s (sha256=%s)", res.ChecksumURL, res.ExpectedSHA256)
-	}
 
 	// Decide minimum CLI version
 	if url := resolveMinVersionURL(); url != "" {
@@ -124,8 +121,12 @@ func Check(ctx context.Context, currentVersion string, force bool) (Result, erro
 			return res, fmt.Errorf("fetch min version: %w", err)
 		}
 	} else {
-		res.MinVersion = res.LatestVersion
-		debugf("min-version: defaulting to latest %s", res.MinVersion)
+		// No min-version source configured, so nothing is mandatory. Defaulting
+		// MinVersion to LatestVersion here made *every* version behind latest a
+		// forced update — and a forced update the CLI cannot complete exits(1),
+		// which turns any fault in the update path into an unusable CLI. Forced
+		// updates stay opt-in via TNR_MIN_VERSION_URL, as documented.
+		debugf("min-version: not configured (%s unset); updates are optional", minVersionEnvKey)
 	}
 
 	currentSemver, errCur := semver.NewVersion(res.CurrentVersion)
@@ -139,11 +140,10 @@ func Check(ctx context.Context, currentVersion string, force bool) (Result, erro
 			res.Mandatory = true
 			res.Optional = false
 			res.Reason = "min-version"
-			return res, nil
 		}
 	}
 
-	if res.LatestVersion != "" {
+	if !res.Mandatory && res.LatestVersion != "" {
 		latestSemver, errLatest := semver.NewVersion(res.LatestVersion)
 		if errLatest == nil && currentSemver.LessThan(latestSemver) {
 			res.Optional = true
@@ -151,7 +151,38 @@ func Check(ctx context.Context, currentVersion string, force bool) (Result, erro
 		}
 	}
 
+	// Resolve the checksum only once an update is actually on the table. It costs a
+	// network round-trip — several, and up to httpTimeout each when they fail — and
+	// a CLI that is already current never installs anything, so paying for it on
+	// every command buys nothing.
+	if res.Mandatory || res.Optional {
+		resolveChecksum(ctx, &res, manifest.Version, platform, checksumURL, force)
+	}
+
 	return res, nil
+}
+
+// resolveChecksum populates the expected archive checksum for an available update,
+// recording failure on the Result instead of returning an error. See the
+// ChecksumUnavailable field for why this does not fail the check.
+func resolveChecksum(ctx context.Context, res *Result, version string, p platform, manifestChecksumURL string, force bool) {
+	candidates := checksumCandidates(manifestChecksumURL, res.AssetURL, version, p.OS)
+	// Always include the GitHub OS-specific checksum as an additional candidate
+	if _, ghChecksum := githubAssetAndChecksum(version, p); ghChecksum != "" {
+		candidates = append(candidates, ghChecksum)
+	}
+
+	expectedChecksum, usedURL, err := fetchChecksum(ctx, version, p.OS, candidates, force)
+	if err != nil {
+		res.ChecksumUnavailable = true
+		res.ChecksumError = err
+		debugf("checksums: unavailable (%v)", err)
+		return
+	}
+
+	res.ExpectedSHA256 = expectedChecksum
+	res.ChecksumURL = usedURL
+	debugf("checksums: %s (sha256=%s)", res.ChecksumURL, res.ExpectedSHA256)
 }
 
 // -------- Manifest & Version Fetching --------
@@ -370,31 +401,50 @@ func fetchMinVersion(ctx context.Context, force bool) (string, error) {
 
 func fetchChecksum(ctx context.Context, version, osName string, candidates []string, force bool) (checksum string, usedURL string, err error) {
 	if !force {
-		if checksum, usedURL, ok := readChecksumCache(version, osName); ok {
-			return checksum, usedURL, nil
+		if cached, ok := readChecksumCache(version, osName); ok {
+			if cached.Unavailable {
+				return "", cached.URL, fmt.Errorf("%w for %s (cached)", errChecksumUnavailable, version)
+			}
+			return cached.Checksum, cached.URL, nil
 		}
 	}
 
+	var lastErr error
 	for _, candidate := range candidates {
 		if candidate == "" {
 			continue
 		}
-		checksum, err := fetchChecksumFromURL(ctx, version, osName, candidate)
-		if err == nil {
-			return checksum, candidate, nil
+		sum, ferr := fetchChecksumFromURL(ctx, version, osName, candidate)
+		if ferr == nil {
+			return sum, candidate, nil
 		}
-		if !errors.Is(err, errChecksumNotFound) {
-			// Try next candidate; remember last error.
+		// A transport or parse failure says more about what went wrong than "that
+		// checksum file simply didn't list our archive", so prefer it when reporting.
+		if lastErr == nil || (errors.Is(lastErr, errChecksumNotFound) && !errors.Is(ferr, errChecksumNotFound)) {
+			lastErr = fmt.Errorf("%s: %w", candidate, ferr)
+		}
+		if !errors.Is(ferr, errChecksumNotFound) {
+			// Try next candidate; remember the one that failed hardest.
 			usedURL = candidate
 		}
 	}
-	if err == nil {
-		err = errors.New("unable to locate checksum")
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%w: no checksum URL candidates for %s", errChecksumUnavailable, version)
 	}
-	return "", usedURL, err
+
+	// Remember the failure briefly. Without this every subsequent command retries
+	// every candidate, and a release that never publishes checksums for this
+	// platform costs the full timeout on each invocation, forever.
+	_ = writeChecksumCacheUnavailable(version, osName, usedURL)
+
+	return "", usedURL, lastErr
 }
 
 var errChecksumNotFound = errors.New("checksum not found")
+
+// errChecksumUnavailable marks the case where no candidate could supply a usable
+// checksum at all, as opposed to a single source not listing the archive.
+var errChecksumUnavailable = errors.New("no verifiable checksum available")
 
 func fetchChecksumFromURL(ctx context.Context, version, osName, checksumURL string) (string, error) {
 	body, err := httpGet(ctx, checksumURL)
@@ -595,6 +645,9 @@ type checksumCache struct {
 	CheckedAt time.Time `json:"checked_at"`
 	Checksum  string    `json:"checksum"`
 	URL       string    `json:"url"`
+	// Unavailable records that no candidate produced a usable checksum. Cached for
+	// negativeChecksumCacheTTL only, so a republished release is picked up soon.
+	Unavailable bool `json:"unavailable,omitempty"`
 }
 
 func readManifestCache() (manifest, bool) {
@@ -633,16 +686,20 @@ func writeMinVersionCache(version string) error {
 	})
 }
 
-func readChecksumCache(version, osName string) (checksum, url string, ok bool) {
+func readChecksumCache(version, osName string) (checksumCache, bool) {
 	name := fmt.Sprintf(checksumsCacheTemplate, version, osName)
 	var cached checksumCache
 	if !readJSONCache(name, &cached) {
-		return "", "", false
+		return checksumCache{}, false
 	}
-	if time.Since(cached.CheckedAt) > cacheTTL {
-		return "", "", false
+	ttl := cacheTTL
+	if cached.Unavailable {
+		ttl = negativeChecksumCacheTTL
 	}
-	return cached.Checksum, cached.URL, true
+	if time.Since(cached.CheckedAt) > ttl {
+		return checksumCache{}, false
+	}
+	return cached, true
 }
 
 func writeChecksumCache(version, osName, checksum, url string) error {
@@ -651,6 +708,15 @@ func writeChecksumCache(version, osName, checksum, url string) error {
 		CheckedAt: time.Now(),
 		Checksum:  checksum,
 		URL:       url,
+	})
+}
+
+func writeChecksumCacheUnavailable(version, osName, url string) error {
+	name := fmt.Sprintf(checksumsCacheTemplate, version, osName)
+	return writeJSONCache(name, checksumCache{
+		CheckedAt:   time.Now(),
+		URL:         url,
+		Unavailable: true,
 	})
 }
 

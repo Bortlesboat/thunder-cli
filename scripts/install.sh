@@ -15,7 +15,7 @@ case "$ARCH" in x86_64|amd64) ARCH=amd64;; arm64|aarch64) ARCH=arm64;; *) echo "
 case "$OS" in darwin) OS=macos;; esac
 FILE_OS="$OS"; [[ "$OS" == "macos" ]] && FILE_OS=darwin
 
-for cmd in curl tar gzip sed sha256sum; do
+for cmd in curl tar gzip sed awk sha256sum; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "Error: $cmd is required but not installed." >&2; exit 1; }
 done
 
@@ -51,8 +51,15 @@ fi
 echo "Downloading tnr v${VERSION}..."
 curl -fL "$url" -o "$tmpdir/tnr.tar.gz"
 curl -fsSL "$checksums" -o "$tmpdir/checksums.txt"
+
+# Match the checksum by archive filename, not by searching the file for our hash.
+# A bare grep passes any archive whose hash appears anywhere in checksums.txt —
+# including a different platform's tarball served from this platform's URL.
+archive=$(basename "${url%%\?*}")
+expected=$(awk -v want="$archive" '{ sub(/\r$/, ""); name=$NF; sub(/^\*/, "", name); sub(/^.*\//, "", name); if (name == want) { print $1; exit } }' "$tmpdir/checksums.txt")
+[[ -n "$expected" ]] || { echo "No checksum published for $archive" >&2; exit 1; }
 sum=$(sha256sum "$tmpdir/tnr.tar.gz" | cut -d' ' -f1)
-grep -q "$sum" "$tmpdir/checksums.txt" || { echo "Checksum mismatch" >&2; exit 1; }
+[[ "$sum" == "$expected" ]] || { echo "Checksum mismatch for $archive" >&2; exit 1; }
 
 # Extract and install
 tar -xzf "$tmpdir/tnr.tar.gz" -C "$tmpdir"

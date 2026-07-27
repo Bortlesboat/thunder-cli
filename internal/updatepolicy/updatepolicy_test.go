@@ -2,6 +2,8 @@ package updatepolicy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -116,7 +118,10 @@ func TestCheckOptionalUpdateUsesCache(t *testing.T) {
 	}
 }
 
-func TestCheckFailsClosedWhenChecksumCannotBeVerified(t *testing.T) {
+// An unverifiable checksum must not hide the fact that an update exists: Check
+// still reports the new version, but flags it as uninstallable so the caller can
+// say so instead of silently doing nothing.
+func TestCheckReportsUpdateButFlagsUnverifiableChecksum(t *testing.T) {
 	tests := []struct {
 		name       string
 		statusCode int
@@ -172,14 +177,71 @@ func TestCheckFailsClosedWhenChecksumCannotBeVerified(t *testing.T) {
 			defer func() { githubReleaseDownloadBaseURL = originalDownloadBase }()
 			t.Setenv("TNR_LATEST_URL", srv.URL+"/latest.json")
 
-			_, err := Check(context.Background(), "1.0.0", true)
-			if err == nil {
-				t.Fatal("Check succeeded without a verifiable checksum")
+			res, err := Check(context.Background(), "1.0.0", true)
+			if err != nil {
+				t.Fatalf("Check() error = %v, want the update still reported", err)
 			}
-			if !strings.Contains(err.Error(), "fetch checksum") {
-				t.Fatalf("Check error = %q, want checksum failure", err)
+			if !res.Mandatory && !res.Optional {
+				t.Error("Check() did not report the available update")
+			}
+			if !res.ChecksumUnavailable {
+				t.Fatal("Check() did not flag the checksum as unavailable")
+			}
+			if res.ChecksumError == nil {
+				t.Error("Check() flagged an unavailable checksum with no reason")
+			}
+			if res.ExpectedSHA256 != "" {
+				t.Errorf("ExpectedSHA256 = %q, want empty so nothing can be installed", res.ExpectedSHA256)
 			}
 		})
+	}
+}
+
+// The checksum is only worth fetching once an update is actually available;
+// fetching it on every command costs a round-trip that buys nothing.
+func TestCheckSkipsChecksumFetchWhenUpToDate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("TNR_MIN_VERSION_URL", "")
+
+	plat := detectPlatform()
+	version := "9.9.9"
+	assetName := targetArchiveName(version, plat.OS)
+
+	var checksumHits atomic.Int32
+	var serverURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/latest.json" {
+			_ = json.NewEncoder(w).Encode(Manifest{
+				Version: version,
+				Assets: map[string]string{
+					fmt.Sprintf("%s/%s", plat.OS, plat.Arch): serverURL + "/" + assetName,
+					"checksums":                              serverURL + "/checksums.txt",
+				},
+			})
+			return
+		}
+		checksumHits.Add(1)
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	serverURL = srv.URL
+
+	originalDownloadBase := githubReleaseDownloadBaseURL
+	githubReleaseDownloadBaseURL = srv.URL
+	defer func() { githubReleaseDownloadBaseURL = originalDownloadBase }()
+	t.Setenv("TNR_LATEST_URL", srv.URL+"/latest.json")
+
+	// Current version == latest, so there is nothing to install.
+	res, err := Check(context.Background(), version, true)
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if res.Mandatory || res.Optional {
+		t.Fatalf("Check() reported an update for the current version: %+v", res)
+	}
+	if got := checksumHits.Load(); got != 0 {
+		t.Errorf("checksum was fetched %d times while up to date, want 0", got)
 	}
 }
 
@@ -306,4 +368,55 @@ func init() {
 	// Ensure the helper functions behave deterministically during tests.
 	_ = runtime.GOOS
 	_ = runtime.GOARCH
+}
+
+// Forced updates are opt-in via TNR_MIN_VERSION_URL. With no min-version source
+// configured, being behind latest is an optional update, never a mandatory one —
+// a mandatory update the CLI cannot complete exits(1) and leaves it unusable.
+func TestCheckDoesNotForceUpdateWithoutMinVersionSource(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv(minVersionEnvKey, "")
+
+	plat := detectPlatform()
+	version := "9.9.9"
+	assetName := targetArchiveName(version, plat.OS)
+	contents := []byte("release archive")
+	sum := sha256.Sum256(contents)
+
+	var serverURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/latest.json" {
+			_ = json.NewEncoder(w).Encode(Manifest{
+				Version: version,
+				Assets: map[string]string{
+					fmt.Sprintf("%s/%s", plat.OS, plat.Arch): serverURL + "/" + assetName,
+					"checksums":                              serverURL + "/checksums.txt",
+				},
+			})
+			return
+		}
+		fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), assetName)
+	}))
+	defer srv.Close()
+	serverURL = srv.URL
+
+	originalDownloadBase := githubReleaseDownloadBaseURL
+	githubReleaseDownloadBaseURL = srv.URL
+	defer func() { githubReleaseDownloadBaseURL = originalDownloadBase }()
+	t.Setenv("TNR_LATEST_URL", srv.URL+"/latest.json")
+
+	res, err := Check(context.Background(), "1.0.0", true)
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if res.Mandatory {
+		t.Errorf("Check() forced an update with %s unset (reason=%q)", minVersionEnvKey, res.Reason)
+	}
+	if !res.Optional {
+		t.Error("Check() did not offer the available update")
+	}
+	if res.MinVersion != "" {
+		t.Errorf("MinVersion = %q, want empty when no min-version source is configured", res.MinVersion)
+	}
 }
