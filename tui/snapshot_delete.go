@@ -257,100 +257,13 @@ func RunSnapshotDeleteInteractive(client *api.Client, snapshots api.ListSnapshot
 	return result.selected, nil
 }
 
-type snapshotDeleteProgressModel struct {
-	spinner      spinner.Model
-	message      string
-	quitting     bool
-	success      bool
-	successMsg   string
-	err          error
-	client       *api.Client
-	snapshotID   string
-	snapshotName string
-}
-
-type snapshotDeleteResultMsg struct {
-	err error
-}
-
-func deleteSnapshotCmd(client *api.Client, snapshotID string) tea.Cmd {
-	return func() tea.Msg {
-		err := client.DeleteSnapshot(snapshotID)
-		return snapshotDeleteResultMsg{err: err}
-	}
-}
-
-func newSnapshotDeleteProgressModel(client *api.Client, snapshotID, snapshotName, message string) snapshotDeleteProgressModel {
-	s := NewPrimarySpinner()
-	return snapshotDeleteProgressModel{
-		spinner:      s,
-		message:      message,
-		client:       client,
-		snapshotID:   snapshotID,
-		snapshotName: snapshotName,
-	}
-}
-
-func (m snapshotDeleteProgressModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, deleteSnapshotCmd(m.client, m.snapshotID))
-}
-
-func (m snapshotDeleteProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case snapshotDeleteResultMsg:
-		if msg.err != nil {
-			m.err = msg.err
-			m.quitting = true
-			return m, tea.Quit
-		}
-		m.success = true
-		m.successMsg = fmt.Sprintf("Successfully deleted snapshot '%s'", m.snapshotName)
-		m.quitting = true
-		return m, tea.Quit
-	case tea.KeyMsg:
-		m.quitting = true
-		return m, tea.Quit
-	case tea.QuitMsg:
-		m.quitting = true
-		return m, nil
-	default:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
-	}
-}
-
-func (m snapshotDeleteProgressModel) View() string {
-	if m.success {
-		return ""
-	}
-	if m.quitting {
-		return ""
-	}
-	return fmt.Sprintf("%s %s", m.spinner.View(), m.message)
-}
-
 func RunSnapshotDeleteProgress(client *api.Client, snapshotID, snapshotName string) (string, error) {
-	InitCommonStyles(os.Stdout)
-
-	m := newSnapshotDeleteProgressModel(client, snapshotID, snapshotName, fmt.Sprintf("Deleting snapshot '%s'...", snapshotName))
-	p := tea.NewProgram(m)
-	finalModel, err := p.Run()
+	err := RunProgress(fmt.Sprintf("Deleting snapshot '%s'...", snapshotName), func() error {
+		return client.DeleteSnapshot(snapshotID)
+	}, nil)
 	if err != nil {
-		return "", fmt.Errorf("error running deletion: %w", err)
+		return "", err
 	}
 
-	result, ok := finalModel.(snapshotDeleteProgressModel)
-	if !ok {
-		return "", fmt.Errorf("unexpected model type")
-	}
-	if result.err != nil {
-		return "", result.err
-	}
-
-	if result.success {
-		return result.successMsg, nil
-	}
-
-	return "", nil
+	return fmt.Sprintf("Successfully deleted snapshot '%s'", snapshotName), nil
 }

@@ -2,50 +2,46 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"os"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 )
 
-// ProgressResultMsg is the standard message returned by API commands
-// used with ProgressModel. The Err field indicates success or failure.
-type ProgressResultMsg struct {
-	Err error
+type progressResultMsg struct{}
+
+// progressModel is deliberately private. Command packages invoke RunProgress
+// instead of constructing a Bubble Tea program or depending on its final model
+// type.
+type progressModel struct {
+	runtime               inlineRuntime
+	spinner               spinner.Model
+	task                  *backgroundTask
+	done                  bool
+	cancellationRequested bool
 }
 
-// ProgressModel is a generic spinner-based progress model for API operations.
-// It shows a spinner while the API command executes, then renders a success
-// box via renderSuccess, or returns the error for the caller to handle.
-type ProgressModel struct {
-	spinner       spinner.Model
-	message       string
-	done          bool
-	err           error
-	cancelled     bool
-	apiCmd        tea.Cmd
-	renderSuccess func() string
-}
-
-// NewProgressModel creates a ProgressModel that runs apiCmd while showing a spinner.
-// On success, renderSuccess is called to produce the final View output.
-func NewProgressModel(message string, apiCmd tea.Cmd, renderSuccess func() string) ProgressModel {
-	InitCommonStyles(os.Stdout)
-	s := NewPrimarySpinner()
-	return ProgressModel{
-		spinner:       s,
-		message:       message,
-		apiCmd:        apiCmd,
-		renderSuccess: renderSuccess,
+func newProgressModel(task *backgroundTask) progressModel {
+	return progressModel{
+		runtime: newInlineRuntime(true),
+		spinner: NewPrimarySpinnerV2(),
+		task:    task,
 	}
 }
 
-func (m ProgressModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, m.apiCmd)
+func (m progressModel) Init() tea.Cmd {
+	return tea.Batch(m.spinner.Tick, m.task.command(func(error) tea.Msg {
+		return progressResultMsg{}
+	}))
 }
 
-func (m ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.runtime.update(msg)
+		return m, nil
+
 	case spinner.TickMsg:
 		if m.done {
 			return m, nil
@@ -54,42 +50,58 @@ func (m ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
-	case ProgressResultMsg:
+	case progressResultMsg:
 		m.done = true
-		m.err = msg.Err
 		return m, tea.Quit
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
-			m.done = true
-			m.cancelled = true
-			return m, tea.Quit
+		case "ctrl+c", "q", "Q", "esc":
+			if m.cancellationRequested {
+				return m, nil
+			}
+			m.cancellationRequested = true
+			return m, m.runtime.print("Operation is already in progress; waiting for it to finish.")
 		}
-
-	case tea.QuitMsg:
-		return m, nil
 	}
 
 	return m, nil
 }
 
-func (m ProgressModel) View() string {
-	if m.done {
-		if m.cancelled || m.err != nil {
-			return ""
-		}
-		return m.renderSuccess()
+func (m progressModel) View() tea.View {
+	return m.runtime.view(m.spinner.View(), m.done)
+}
+
+// RunProgress runs a mutating operation with a one-cell v2 progress renderer.
+// It owns the Bubble Tea program and does not return until the operation has
+// completed, even if the user interrupts the renderer. API mutations cannot be
+// safely abandoned because their clients do not expose cancellation-aware
+// methods.
+func RunProgress(message string, action func() error, renderSuccess func() string) error {
+	InitCommonStyles(os.Stdout)
+	return runProgress(message, os.Stdout, action, renderSuccess)
+}
+
+func runProgress(message string, out io.Writer, action func() error, renderSuccess func() string, options ...tea.ProgramOption) error {
+	if err := writeTranscript(out, LabelStyle().Bold(false).Render(message)); err != nil {
+		return fmt.Errorf("write progress transcript: %w", err)
 	}
-	return fmt.Sprintf("\n %s %s\n", m.spinner.View(), m.message)
-}
 
-// Err returns the error from the API command, if any.
-func (m ProgressModel) Err() error {
-	return m.err
-}
+	task := newBackgroundTask(action)
+	model := newProgressModel(task)
+	programOptions := append([]tea.ProgramOption{tea.WithOutput(out)}, options...)
 
-// Cancelled returns true if the user cancelled the operation.
-func (m ProgressModel) Cancelled() bool {
-	return m.cancelled
+	// The operation result is authoritative. If the renderer exits early, wait
+	// for the mutation so callers never report cancellation while it continues.
+	_, _ = runInlineProgram(model, programOptions...)
+	if err := task.wait(); err != nil {
+		return err
+	}
+
+	if renderSuccess != nil {
+		if err := writeTranscript(out, renderSuccess()); err != nil {
+			return fmt.Errorf("write progress result: %w", err)
+		}
+	}
+	return nil
 }

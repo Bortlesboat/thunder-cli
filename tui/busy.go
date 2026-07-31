@@ -2,13 +2,13 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"runtime/debug"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -19,6 +19,8 @@ type BusyModel struct {
 	spin        spinner.Model
 	Quitting    bool
 	Interrupted bool
+	runtime     inlineRuntime
+	task        *backgroundTask
 
 	styles busyStyles
 }
@@ -37,15 +39,20 @@ func newBusyStyles() busyStyles {
 
 func NewBusyModel(text string) BusyModel {
 	InitCommonStyles(os.Stdout)
-	s := NewPrimarySpinner()
 	return BusyModel{
-		text:   text,
-		spin:   s,
-		styles: newBusyStyles(),
+		text:    text,
+		spin:    NewPrimarySpinnerV2(),
+		runtime: newInlineRuntime(true),
+		styles:  newBusyStyles(),
 	}
 }
 
 func (m BusyModel) Init() tea.Cmd {
+	if m.task != nil {
+		return tea.Batch(m.spin.Tick, m.task.command(func(error) tea.Msg {
+			return BusyDoneMsg{}
+		}))
+	}
 	return m.spin.Tick
 }
 
@@ -54,7 +61,10 @@ func (m BusyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case BusyDoneMsg:
 		m.Quitting = true
 		return m, tea.Quit
-	case tea.KeyMsg:
+	case tea.WindowSizeMsg:
+		m.runtime.update(msg)
+		return m, nil
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "Q", "esc", "ctrl+c":
 			m.Interrupted = true
@@ -69,11 +79,13 @@ func (m BusyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m BusyModel) View() string {
-	if m.Quitting {
-		return ""
-	}
-	return m.spin.View() + " " + m.styles.text.Render(m.text) + "\n" + m.styles.help.Render("Esc/Q: Quit\n")
+func (m BusyModel) View() tea.View {
+	return m.runtime.view(m.spin.View(), m.Quitting)
+}
+
+func (m BusyModel) transcript() string {
+	return m.styles.text.Render(m.text) + "\n" +
+		m.styles.help.Render("Esc/Q: Quit")
 }
 
 // RunWithBusySpinner shows a spinner while fn executes, then dismisses it.
@@ -81,8 +93,9 @@ func (m BusyModel) View() string {
 //
 // If the user cancels (q/esc/ctrl+c) it returns context.Canceled immediately
 // while fn may still be running, so callers must not read fn's outputs unless
-// the returned error is nil. Keep fn read-only: a cancel that races a
-// just-completed fn is still reported as cancelled.
+// the returned error is nil. This immediate-cancellation runner is only safe
+// for read-only work. Mutating operations must use RunProgress, which waits
+// for the operation's actual result before returning.
 func RunWithBusySpinner(message string, out io.Writer, fn func() error) error {
 	if !IsInteractive() {
 		fmt.Fprintf(os.Stderr, "%s\n", message)
@@ -90,26 +103,18 @@ func RunWithBusySpinner(message string, out io.Writer, fn func() error) error {
 	}
 
 	busy := NewBusyModel(message)
+	_ = writeTranscript(out, busy.transcript())
+	busy.task = newBackgroundTask(fn)
 
-	bp := tea.NewProgram(busy, tea.WithOutput(out), tea.WithoutSignalHandler())
-	errCh := make(chan error, 1)
-	go func() {
-		// A panic in fn would crash the process without unwinding the tty-restore
-		// defers in cmd.Execute; convert it to an error, keeping the panic-site stack.
-		defer func() {
-			if r := recover(); r != nil {
-				errCh <- fmt.Errorf("busy spinner task panicked: %v\n%s", r, debug.Stack())
-				bp.Send(BusyDoneMsg{})
-			}
-		}()
-		errCh <- fn()
-		bp.Send(BusyDoneMsg{})
-	}()
-
-	// A TUI failure must not fail the command; fall through to fn's result.
-	finalModel, _ := bp.Run()
+	finalModel, runErr := runInlineProgram(busy, tea.WithOutput(out))
 	if m, ok := finalModel.(BusyModel); ok && m.Interrupted {
 		return context.Canceled
 	}
-	return <-errCh
+	if errors.Is(runErr, tea.ErrInterrupted) {
+		return context.Canceled
+	}
+
+	// A renderer failure must not fail the command. The read-only operation's
+	// result is still authoritative.
+	return busy.task.wait()
 }

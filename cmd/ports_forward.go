@@ -5,7 +5,6 @@ import (
 	"os"
 	"strconv"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/getsentry/sentry-go"
 	"github.com/spf13/cobra"
@@ -140,48 +139,31 @@ func runPortsForward(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := tea.NewProgram(tui.NewProgressModel("Updating ports...",
-		portsForwardApiCall(client, selectedInstance.ID, add, remove, &portsResp),
+	err = tui.RunProgress("Updating ports...",
+		func() error {
+			return performPortsForward(client, selectedInstance.ID, add, remove, &portsResp)
+		},
 		renderPortsForwardSuccess(&portsResp),
-	))
-	finalModel, err := p.Run()
+	)
 	if err != nil {
 		sentry.WithScope(func(scope *sentry.Scope) {
-			scope.SetTag("operation", "ports_forward_tui")
-			sentry.CaptureException(err)
+			scope.SetTag("operation", "ports_forward")
+			if !isUserError(err) {
+				sentry.CaptureException(err)
+			}
 		})
-		return fmt.Errorf("error during port update: %w", err)
-	}
-
-	result := finalModel.(tui.ProgressModel)
-
-	if result.Cancelled() {
-		PrintWarningSimple("User cancelled port update")
-		return nil
-	}
-
-	if result.Err() != nil {
-		if !isUserError(result.Err()) {
-			sentry.WithScope(func(scope *sentry.Scope) {
-				scope.SetTag("operation", "ports_forward")
-				sentry.CaptureException(result.Err())
-			})
-		}
-		return fmt.Errorf("failed to update ports: %w", result.Err())
+		return fmt.Errorf("failed to update ports: %w", err)
 	}
 
 	return nil
 }
 
-func portsForwardApiCall(client *api.Client, instanceID string, add, remove []int, resp **api.PortAddResponse) tea.Cmd {
-	return func() tea.Msg {
-		r, err := client.UpdatePorts(instanceID, add, remove)
-		if err != nil {
-			return tui.ProgressResultMsg{Err: err}
-		}
+func performPortsForward(client *api.Client, instanceID string, add, remove []int, resp **api.PortAddResponse) error {
+	r, err := client.UpdatePorts(instanceID, add, remove)
+	if err == nil {
 		*resp = r
-		return tui.ProgressResultMsg{Err: nil}
 	}
+	return err
 }
 
 func renderPortsForwardSuccess(resp **api.PortAddResponse) func() string {

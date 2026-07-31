@@ -274,99 +274,14 @@ func RunDeleteInteractive(client *api.Client, instances []api.Instance) (*api.In
 	return result.selected, nil
 }
 
-type deleteProgressModel struct {
-	spinner    spinner.Model
-	message    string
-	quitting   bool
-	success    bool
-	successMsg string
-	err        error
-	client     *api.Client
-	instanceID string
-}
-
-type deleteResultMsg struct {
-	err error
-}
-
-func deleteInstanceCmd(client *api.Client, instanceID string) tea.Cmd {
-	return func() tea.Msg {
-		_, err := client.DeleteInstance(instanceID)
-		return deleteResultMsg{err: err}
-	}
-}
-
-func newDeleteProgressModel(client *api.Client, instanceID, message string) deleteProgressModel {
-	s := NewPrimarySpinner()
-	return deleteProgressModel{
-		spinner:    s,
-		message:    message,
-		client:     client,
-		instanceID: instanceID,
-	}
-}
-
-func (m deleteProgressModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, deleteInstanceCmd(m.client, m.instanceID))
-}
-
-func (m deleteProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case deleteResultMsg:
-		if msg.err != nil {
-			m.err = msg.err
-			m.quitting = true
-			return m, tea.Quit
-		}
-		m.success = true
-		m.successMsg = fmt.Sprintf("Successfully deleted Thunder Compute instance %s", m.instanceID)
-		m.quitting = true
-		return m, tea.Quit
-	case tea.KeyMsg:
-		m.quitting = true
-		return m, tea.Quit
-	case tea.QuitMsg:
-		m.quitting = true
-		return m, nil
-	default:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
-	}
-}
-
-func (m deleteProgressModel) View() string {
-	if m.success {
-		return ""
-	}
-	if m.quitting {
-		return ""
-	}
-	return fmt.Sprintf("%s %s", m.spinner.View(), m.message)
-}
-
 func RunDeleteProgress(client *api.Client, instanceID string) (string, error) {
-	InitCommonStyles(os.Stdout)
-
-	m := newDeleteProgressModel(client, instanceID, fmt.Sprintf("Deleting instance %s...", instanceID))
-	p := tea.NewProgram(m)
-	finalModel, err := p.Run()
+	err := RunProgress(fmt.Sprintf("Deleting instance %s...", instanceID), func() error {
+		_, deleteErr := client.DeleteInstance(instanceID)
+		return deleteErr
+	}, nil)
 	if err != nil {
-		return "", fmt.Errorf("error running deletion: %w", err)
+		return "", err
 	}
 
-	result, ok := finalModel.(deleteProgressModel)
-	if !ok {
-		return "", fmt.Errorf("unexpected model type")
-	}
-
-	if result.err != nil {
-		return "", result.err
-	}
-
-	if result.success {
-		return result.successMsg, nil
-	}
-
-	return "", nil
+	return fmt.Sprintf("Successfully deleted Thunder Compute instance %s", instanceID), nil
 }

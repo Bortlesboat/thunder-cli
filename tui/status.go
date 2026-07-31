@@ -17,9 +17,7 @@ import (
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
-	lipglossv2 "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Thunder-Compute/thunder-cli/api"
 	"github.com/Thunder-Compute/thunder-cli/tui/theme"
@@ -67,8 +65,7 @@ type statusModel struct {
 	client       *api.Client
 	monitoring   bool
 	verbose      bool
-	width        int
-	transcript   bool // Persist snapshots; keep the managed live frame to one cell.
+	runtime      inlineRuntime
 	lastUpdate   time.Time
 	quitting     bool
 	spinner      spinner.Model
@@ -92,22 +89,15 @@ type instancesMsg struct {
 	err       error
 }
 
-type statusQuitNow struct{}
-
 func newStatusModel(client *api.Client, monitoring bool, instances []api.Instance, verbose bool) statusModel {
-	s := spinner.New(
-		spinner.WithSpinner(spinner.MiniDot),
-		spinner.WithStyle(lipglossv2.NewStyle().Bold(true)),
-	)
-
 	m := statusModel{
 		client:       client,
 		monitoring:   monitoring,
 		verbose:      verbose,
-		transcript:   monitoring,
+		runtime:      newInlineRuntime(monitoring),
 		instances:    instances,
 		lastUpdate:   time.Now(),
-		spinner:      s,
+		spinner:      NewPrimarySpinnerV2(),
 		progressBars: make(map[string]progress.Model),
 		styles:       newStatusStyles(),
 	}
@@ -190,10 +180,6 @@ func fetchInstancesCmd(client *api.Client) tea.Cmd {
 	}
 }
 
-func deferStatusQuit() tea.Cmd {
-	return tea.Tick(time.Millisecond, func(time.Time) tea.Msg { return statusQuitNow{} })
-}
-
 func (m statusModel) statusRefreshRetryDelay(err error) (time.Duration, bool) {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
@@ -251,7 +237,7 @@ func (m statusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.runtime.update(msg)
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -260,10 +246,10 @@ func (m statusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = true
 			m.quitting = true
 			m.monitoring = false
-			return m, deferStatusQuit()
+			return m, deferInlineQuit()
 		}
 
-	case statusQuitNow:
+	case inlineQuitNow:
 		return m, tea.Quit
 
 	case tickMsg:
@@ -289,10 +275,10 @@ func (m statusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			m.monitoring = false
 			m.quitting = true
-			if m.transcript {
-				return m, tea.Sequence(m.printSnapshotCmd(), deferStatusQuit())
+			if m.runtime.transcript {
+				return m, tea.Sequence(m.runtime.print(m.viewContent()), deferInlineQuit())
 			}
-			return m, deferStatusQuit()
+			return m, deferInlineQuit()
 		}
 		instancesChanged := !reflect.DeepEqual(m.instances, msg.instances)
 		recoveredFromRefreshError := m.refreshErr != nil
@@ -310,7 +296,7 @@ func (m statusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.withSnapshot(m.tickCmd(), instancesChanged || recoveredFromRefreshError)
 			}
 			m.quitting = true
-			return m, deferStatusQuit()
+			return m, deferInlineQuit()
 		}
 
 		m.emptyStartedAt = time.Time{}
@@ -325,7 +311,7 @@ func (m statusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if !m.monitoring {
 			m.quitting = true
-			return m, deferStatusQuit()
+			return m, deferInlineQuit()
 		}
 
 		return m, m.withSnapshot(m.tickCmd(), instancesChanged || recoveredFromRefreshError)
@@ -335,44 +321,23 @@ func (m statusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m statusModel) View() tea.View {
-	if m.transcript {
-		if m.quitting {
-			return tea.NewView("")
-		}
-		return tea.NewView(m.liveFooter())
+	if m.runtime.transcript {
+		return m.runtime.view(m.spinner.View(), m.quitting)
 	}
 	return tea.NewView(m.viewContent())
 }
 
-func (m statusModel) liveFooter() string {
-	// Keep the renderer-owned frame to one cell. A longer inline frame can
-	// soft-wrap before Bubble Tea receives the resize event, leaving its
-	// relative cursor position out of sync with the terminal.
-	if m.width < 2 {
-		return ""
-	}
-	return m.spinner.View()
-}
-
-func (m statusModel) printSnapshotCmd() tea.Cmd {
-	return tea.Println(strings.TrimSuffix(m.viewContent(), "\n"))
-}
-
 func writeStatusSnapshot(out io.Writer, m statusModel) error {
-	_, err := fmt.Fprintln(out, strings.TrimSuffix(m.viewContent(), "\n"))
-	return err
+	return writeTranscript(out, m.viewContent())
 }
 
 func (m statusModel) withSnapshot(cmd tea.Cmd, changed bool) tea.Cmd {
-	if !m.transcript || !changed {
-		return cmd
-	}
-	return tea.Batch(cmd, m.printSnapshotCmd())
+	return m.runtime.withTranscript(cmd, m.viewContent(), changed)
 }
 
 func (m statusModel) viewContent() string {
 	if m.err != nil {
-		return m.wrapText(errorStyleTUI.Render(fmt.Sprintf("✗ Error: %v", m.err))) + "\n"
+		return m.runtime.wrap(errorStyleTUI.Render(fmt.Sprintf("✗ Error: %v", m.err))) + "\n"
 	}
 
 	var b strings.Builder
@@ -406,13 +371,13 @@ func (m statusModel) viewContent() string {
 
 	if m.quitting {
 		timestamp := m.lastUpdate.Format("15:04:05")
-		b.WriteString(m.wrapText(m.styles.timestamp.Render(fmt.Sprintf("Last updated: %s", timestamp))))
+		b.WriteString(m.runtime.wrap(m.styles.timestamp.Render(fmt.Sprintf("Last updated: %s", timestamp))))
 		b.WriteString("\n")
 		return b.String()
 	}
 
 	if m.refreshErr != nil && !m.nextRetryAt.IsZero() {
-		b.WriteString(m.wrapText(warningStyleTUI.Render(statusRefreshErrorMessage(m.refreshErr, m.nextRetryAt))))
+		b.WriteString(m.runtime.wrap(warningStyleTUI.Render(statusRefreshErrorMessage(m.refreshErr, m.nextRetryAt))))
 		b.WriteString("\n")
 	}
 
@@ -423,10 +388,10 @@ func (m statusModel) viewContent() string {
 			statusText = fmt.Sprintf("Last updated: %s; checking every %s", ts, formatRetryDelay(nextEmptyPollDelay(m.emptyStartedAt)))
 		}
 		liveStatus := m.styles.timestamp.Render(statusText)
-		if !m.transcript {
+		if !m.runtime.transcript {
 			liveStatus += "  " + m.spinner.View()
 		}
-		b.WriteString(m.wrapText(liveStatus))
+		b.WriteString(m.runtime.wrap(liveStatus))
 		b.WriteString("\n")
 	}
 
@@ -454,28 +419,21 @@ func (m statusModel) viewContent() string {
 
 	b.WriteString("\n")
 	if m.quitting {
-		b.WriteString(m.wrapText(helpStyleTUI.Render("Closing...")))
+		b.WriteString(m.runtime.wrap(helpStyleTUI.Render("Closing...")))
 	} else if m.monitoring {
-		b.WriteString(m.wrapText(helpStyleTUI.Render("Press 'Q' to cancel monitoring")))
+		b.WriteString(m.runtime.wrap(helpStyleTUI.Render("Press 'Q' to cancel monitoring")))
 	} else {
-		b.WriteString(m.wrapText(helpStyleTUI.Render("Press 'Q' to close")))
+		b.WriteString(m.runtime.wrap(helpStyleTUI.Render("Press 'Q' to close")))
 	}
 	b.WriteString("\n")
 
 	return b.String()
 }
 
-func (m statusModel) wrapText(text string) string {
-	if m.width <= 0 {
-		return text
-	}
-	return ansi.Wrap(text, m.width, "")
-}
-
 func (m statusModel) renderTable() string {
 	if len(m.instances) == 0 {
 		message := warningStyleTUI.Render("⚠ No instances found. Use 'tnr create' to create a Thunder Compute instance.")
-		return m.wrapText(message)
+		return m.runtime.wrap(message)
 	}
 
 	colWidths := map[string]int{
@@ -832,10 +790,6 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-func newStatusProgram(m tea.Model, options ...tea.ProgramOption) *tea.Program {
-	return tea.NewProgram(m, options...)
-}
-
 func RunStatus(client *api.Client, monitoring bool, instances []api.Instance, verbose bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -843,18 +797,16 @@ func RunStatus(client *api.Client, monitoring bool, instances []api.Instance, ve
 	InitCommonStyles(os.Stdout)
 
 	m := newStatusModel(client, monitoring, instances, verbose)
-	if m.transcript {
+	if m.runtime.transcript {
 		if err := writeStatusSnapshot(os.Stdout, m); err != nil {
 			return fmt.Errorf("write initial status snapshot: %w", err)
 		}
 	}
-	p := newStatusProgram(
+	if _, err := runInlineProgram(
 		m,
 		tea.WithContext(ctx),
 		tea.WithOutput(os.Stdout),
-	)
-
-	if _, err := p.Run(); err != nil {
+	); err != nil {
 		return fmt.Errorf("error running status TUI: %w", err)
 	}
 

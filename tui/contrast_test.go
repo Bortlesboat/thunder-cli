@@ -101,7 +101,8 @@ func contrastCases() []contrastCase {
 		{"panel title", func() string { return TitleStyle().Render("Select a GPU") }, structural},
 		// A spinner that cannot be seen cannot distinguish "working" from
 		// "hung", so it is held to the same floor as text.
-		{"spinner", func() string { return SpinnerStyle().Render("⣽") }, structural},
+		{"v1 spinner", func() string { return SpinnerStyle().Render("⣽") }, structural},
+		{"v2 spinner", func() string { return SpinnerStyleV2().Render("⣽") }, structural},
 		// A box frame that vanishes leaves padded text floating with no
 		// grouping, so it is held to the same floor. Borders emit no escape of
 		// their own; this fails the moment someone sets BorderForeground.

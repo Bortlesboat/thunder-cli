@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/getsentry/sentry-go"
 	"github.com/spf13/cobra"
@@ -262,37 +261,22 @@ func runModify(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	p := tea.NewProgram(tui.NewProgressModel("Modifying instance...",
-		modifyInstanceCmd(client, selectedInstance.ID, modifyReq, &modifyResp),
+	err = tui.RunProgress("Modifying instance...",
+		func() error {
+			return performModifyInstance(client, selectedInstance.ID, modifyReq, &modifyResp)
+		},
 		renderModifySuccess(selectedInstance.ID, &modifyResp),
-	))
-	finalModel, err := p.Run()
+	)
 	if err != nil {
 		sentry.WithScope(func(scope *sentry.Scope) {
-			scope.SetTag("operation", "modify_tui")
-			sentry.CaptureException(err)
+			scope.SetTag("operation", "modify_instance")
+			if !isUserError(err) {
+				sentry.CaptureException(err)
+			}
 		})
-		return fmt.Errorf("error during modification: %w", err)
+		return fmt.Errorf("failed to modify instance: %w", err)
 	}
 
-	result := finalModel.(tui.ProgressModel)
-
-	if result.Cancelled() {
-		PrintWarningSimple("User cancelled modification")
-		return nil
-	}
-
-	if result.Err() != nil {
-		if !isUserError(result.Err()) {
-			sentry.WithScope(func(scope *sentry.Scope) {
-				scope.SetTag("operation", "modify_instance")
-				sentry.CaptureException(result.Err())
-			})
-		}
-		return fmt.Errorf("failed to modify instance: %w", result.Err())
-	}
-
-	// Success output is rendered in the View() method
 	return nil
 }
 
@@ -486,14 +470,12 @@ func validateAndBuildModifyRequest(presets *tui.ModifyPresets, currentInstance *
 	return req, nil
 }
 
-func modifyInstanceCmd(client *api.Client, instanceID string, req api.InstanceModifyRequest, resp **api.InstanceModifyResponse) tea.Cmd {
-	return func() tea.Msg {
-		r, err := client.ModifyInstance(instanceID, req)
-		if err == nil {
-			*resp = r
-		}
-		return tui.ProgressResultMsg{Err: err}
+func performModifyInstance(client *api.Client, instanceID string, req api.InstanceModifyRequest, resp **api.InstanceModifyResponse) error {
+	r, err := client.ModifyInstance(instanceID, req)
+	if err == nil {
+		*resp = r
 	}
+	return err
 }
 
 func renderModifySuccess(instanceID string, resp **api.InstanceModifyResponse) func() string {

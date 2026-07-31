@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
@@ -53,14 +52,12 @@ func init() {
 	_ = createCmd.Flags().MarkHidden("disk-size-gb")
 }
 
-func createInstanceCmd(client *api.Client, req api.CreateInstanceRequest, resp **api.CreateInstanceResponse) tea.Cmd {
-	return func() tea.Msg {
-		r, err := client.CreateInstance(req)
-		if err == nil {
-			*resp = r
-		}
-		return tui.ProgressResultMsg{Err: err}
+func performCreateInstance(client *api.Client, req api.CreateInstanceRequest, resp **api.CreateInstanceResponse) error {
+	r, err := client.CreateInstance(req)
+	if err == nil {
+		*resp = r
 	}
+	return err
 }
 
 func renderCreateSuccess(resp **api.CreateInstanceResponse) func() string {
@@ -278,25 +275,11 @@ func runCreate(cmd *cobra.Command) error {
 			fmt.Printf("Instance created: ID=%d UUID=%s\n", resp.Identifier, resp.UUID)
 		}
 	} else {
-		progressModel := tui.NewProgressModel("Creating instance...",
-			createInstanceCmd(client, req, &resp),
+		if err := tui.RunProgress("Creating instance...",
+			func() error { return performCreateInstance(client, req, &resp) },
 			renderCreateSuccess(&resp),
-		)
-		program := tea.NewProgram(progressModel)
-		finalModel, runErr := program.Run()
-		if runErr != nil {
-			return fmt.Errorf("failed to render progress: %w", runErr)
-		}
-
-		result := finalModel.(tui.ProgressModel)
-
-		if result.Cancelled() {
-			PrintWarningSimple("User cancelled creation process")
-			return nil
-		}
-
-		if result.Err() != nil {
-			return fmt.Errorf("failed to create instance: %w", result.Err())
+		); err != nil {
+			return fmt.Errorf("failed to create instance: %w", err)
 		}
 	}
 

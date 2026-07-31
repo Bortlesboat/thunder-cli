@@ -5,22 +5,19 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Thunder-Compute/thunder-cli/tui/theme"
 )
 
 type updateStyles struct {
-	title      lipgloss.Style
-	version    lipgloss.Style
-	arrow      lipgloss.Style
-	pmBox      lipgloss.Style
-	command    lipgloss.Style
-	help       lipgloss.Style
-	label      lipgloss.Style
-	spinnerMsg lipgloss.Style
+	title   lipgloss.Style
+	version lipgloss.Style
+	arrow   lipgloss.Style
+	pmBox   lipgloss.Style
+	command lipgloss.Style
+	help    lipgloss.Style
+	label   lipgloss.Style
 }
 
 func newUpdateStyles() updateStyles {
@@ -32,10 +29,9 @@ func newUpdateStyles() updateStyles {
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(theme.WarningColor).
 			Padding(1, 2),
-		command:    LabelStyle(),
-		help:       HelpStyle(),
-		label:      LabelStyle(),
-		spinnerMsg: LabelStyle().Bold(false),
+		command: LabelStyle(),
+		help:    HelpStyle(),
+		label:   LabelStyle(),
 	}
 }
 
@@ -108,87 +104,4 @@ func RenderUpdateFailed(err error, releaseURL string) string {
 	content.WriteString("\n")
 	content.WriteString(HelpStyle().Render(fmt.Sprintf("You can download the latest version from: %s", releaseURL)))
 	return content.String()
-}
-
-type updateProgressModel struct {
-	spinner  spinner.Model
-	message  string
-	quitting bool
-	done     bool
-	err      error
-	action   func() error
-	styles   updateStyles
-}
-
-type updateDoneMsg struct {
-	err error
-}
-
-func runUpdateAction(action func() error) tea.Cmd {
-	return func() tea.Msg {
-		err := action()
-		return updateDoneMsg{err: err}
-	}
-}
-
-func newUpdateProgressModel(message string, action func() error) updateProgressModel {
-	InitCommonStyles(os.Stdout)
-	s := NewPrimarySpinner()
-	return updateProgressModel{
-		spinner: s,
-		message: message,
-		action:  action,
-		styles:  newUpdateStyles(),
-	}
-}
-
-func (m updateProgressModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, runUpdateAction(m.action))
-}
-
-func (m updateProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case updateDoneMsg:
-		m.done = true
-		m.err = msg.err
-		m.quitting = true
-		return m, tea.Quit
-	case tea.KeyMsg:
-		if msg.String() == "q" || msg.String() == "ctrl+c" {
-			m.quitting = true
-			return m, tea.Quit
-		}
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
-	}
-	return m, nil
-}
-
-func (m updateProgressModel) View() string {
-	if m.quitting || m.done {
-		return ""
-	}
-	return fmt.Sprintf("%s %s\n", m.spinner.View(), m.styles.spinnerMsg.Render(m.message))
-}
-
-func RunUpdateProgress(message string, action func() error) error {
-	InitCommonStyles(os.Stdout)
-	m := newUpdateProgressModel(message, action)
-	p := tea.NewProgram(m)
-	finalModel, err := p.Run()
-	if err != nil {
-		return fmt.Errorf("error running update progress: %w", err)
-	}
-
-	result, ok := finalModel.(updateProgressModel)
-	if !ok {
-		return fmt.Errorf("unexpected model type")
-	}
-	if result.err != nil {
-		return result.err
-	}
-
-	return nil
 }

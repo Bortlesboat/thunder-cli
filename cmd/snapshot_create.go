@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/getsentry/sentry-go"
 	"github.com/spf13/cobra"
@@ -39,14 +38,12 @@ func init() {
 	snapshotCreateCmd.Flags().StringVar(&snapshotName, "name", "", "Name for the snapshot")
 }
 
-func createSnapshotCmd(client *api.Client, req api.CreateSnapshotRequest, resp **api.CreateSnapshotResponse) tea.Cmd {
-	return func() tea.Msg {
-		r, err := client.CreateSnapshot(req)
-		if err == nil {
-			*resp = r
-		}
-		return tui.ProgressResultMsg{Err: err}
+func performSnapshotCreate(client *api.Client, req api.CreateSnapshotRequest, resp **api.CreateSnapshotResponse) error {
+	r, err := client.CreateSnapshot(req)
+	if err == nil {
+		*resp = r
 	}
+	return err
 }
 
 func renderSnapshotCreateSuccess(resp **api.CreateSnapshotResponse) func() string {
@@ -160,35 +157,18 @@ func runSnapshotCreate(cmd *cobra.Command) error {
 		return nil
 	}
 
-	progressModel := tui.NewProgressModel("Creating snapshot...",
-		createSnapshotCmd(client, req, &snapshotResp),
+	runErr := tui.RunProgress("Creating snapshot...",
+		func() error { return performSnapshotCreate(client, req, &snapshotResp) },
 		renderSnapshotCreateSuccess(&snapshotResp),
 	)
-	program := tea.NewProgram(progressModel)
-	finalModel, runErr := program.Run()
 	if runErr != nil {
 		sentry.WithScope(func(scope *sentry.Scope) {
-			scope.SetTag("operation", "snapshot_create_tui")
-			sentry.CaptureException(runErr)
+			scope.SetTag("operation", "snapshot_create")
+			if !isUserError(runErr) {
+				sentry.CaptureException(runErr)
+			}
 		})
-		return fmt.Errorf("failed to render progress: %w", runErr)
-	}
-
-	result := finalModel.(tui.ProgressModel)
-
-	if result.Cancelled() {
-		PrintWarningSimple("User cancelled snapshot creation")
-		return nil
-	}
-
-	if result.Err() != nil {
-		if !isUserError(result.Err()) {
-			sentry.WithScope(func(scope *sentry.Scope) {
-				scope.SetTag("operation", "snapshot_create")
-				sentry.CaptureException(result.Err())
-			})
-		}
-		return fmt.Errorf("failed to create snapshot: %w", result.Err())
+		return fmt.Errorf("failed to create snapshot: %w", runErr)
 	}
 
 	return nil

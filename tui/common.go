@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	spinnerv2 "charm.land/bubbles/v2/spinner"
+	lipglossv2 "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -221,4 +223,17 @@ func NewPrimarySpinner() spinner.Model {
 	s.Spinner = spinner.Dot
 	s.Style = SpinnerStyle()
 	return s
+}
+
+// SpinnerStyleV2 preserves the spinner's information-bearing contrast without
+// tying the v2 renderer to the legacy Lip Gloss renderer.
+func SpinnerStyleV2() lipglossv2.Style {
+	return lipglossv2.NewStyle().Bold(true)
+}
+
+func NewPrimarySpinnerV2() spinnerv2.Model {
+	return spinnerv2.New(
+		spinnerv2.WithSpinner(spinnerv2.MiniDot),
+		spinnerv2.WithStyle(SpinnerStyleV2()),
+	)
 }
