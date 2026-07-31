@@ -1175,8 +1175,13 @@ func (m createModel) computePreviewPrice() float64 {
 	return utils.CalculateHourlyPrice(m.pricing, gpuType, numGPUs, vcpus, diskSizeGB, included)
 }
 
+func newCreateProgram(m tea.Model, options ...tea.ProgramOption) *tea.Program {
+	options = append([]tea.ProgramOption{tea.WithAltScreen()}, options...)
+	return tea.NewProgram(m, options...)
+}
+
 func runCreateModel(m createModel) (*CreateConfig, error) {
-	p := tea.NewProgram(m)
+	p := newCreateProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, fmt.Errorf("error running TUI: %w", err)

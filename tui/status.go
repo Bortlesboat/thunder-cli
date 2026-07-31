@@ -4,17 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image/color"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	lipglossv2 "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Thunder-Compute/thunder-cli/api"
 	"github.com/Thunder-Compute/thunder-cli/tui/theme"
@@ -62,6 +67,8 @@ type statusModel struct {
 	client       *api.Client
 	monitoring   bool
 	verbose      bool
+	width        int
+	transcript   bool // Persist snapshots; keep the managed live frame to one cell.
 	lastUpdate   time.Time
 	quitting     bool
 	spinner      spinner.Model
@@ -85,15 +92,19 @@ type instancesMsg struct {
 	err       error
 }
 
-type quitNow struct{}
+type statusQuitNow struct{}
 
 func newStatusModel(client *api.Client, monitoring bool, instances []api.Instance, verbose bool) statusModel {
-	s := NewPrimarySpinner()
+	s := spinner.New(
+		spinner.WithSpinner(spinner.MiniDot),
+		spinner.WithStyle(lipglossv2.NewStyle().Bold(true)),
+	)
 
 	m := statusModel{
 		client:       client,
 		monitoring:   monitoring,
 		verbose:      verbose,
+		transcript:   monitoring,
 		instances:    instances,
 		lastUpdate:   time.Now(),
 		spinner:      s,
@@ -179,8 +190,8 @@ func fetchInstancesCmd(client *api.Client) tea.Cmd {
 	}
 }
 
-func deferQuit() tea.Cmd {
-	return tea.Tick(1*time.Millisecond, func(time.Time) tea.Msg { return quitNow{} })
+func deferStatusQuit() tea.Cmd {
+	return tea.Tick(time.Millisecond, func(time.Time) tea.Msg { return statusQuitNow{} })
 }
 
 func (m statusModel) statusRefreshRetryDelay(err error) (time.Duration, bool) {
@@ -239,16 +250,20 @@ func (m statusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		return m, nil
+
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "Q", "esc", "ctrl+c":
 			m.cancelled = true
 			m.quitting = true
 			m.monitoring = false
-			return m, deferQuit()
+			return m, deferStatusQuit()
 		}
 
-	case quitNow:
+	case statusQuitNow:
 		return m, tea.Quit
 
 	case tickMsg:
@@ -265,15 +280,22 @@ func (m statusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			if m.monitoring {
 				if delay, ok := m.statusRefreshRetryDelay(msg.err); ok {
+					refreshChanged := m.refreshErr == nil || m.refreshErr.Error() != msg.err.Error()
 					m.refreshErr = msg.err
 					m.nextRetryAt = time.Now().Add(delay)
-					return m, tickAfter(delay)
+					return m, m.withSnapshot(tickAfter(delay), refreshChanged)
 				}
 			}
 			m.err = msg.err
 			m.monitoring = false
-			return m, deferQuit()
+			m.quitting = true
+			if m.transcript {
+				return m, tea.Sequence(m.printSnapshotCmd(), deferStatusQuit())
+			}
+			return m, deferStatusQuit()
 		}
+		instancesChanged := !reflect.DeepEqual(m.instances, msg.instances)
+		recoveredFromRefreshError := m.refreshErr != nil
 		m.instances = msg.instances
 		m.lastUpdate = time.Now()
 		m.refreshErr = nil
@@ -285,10 +307,10 @@ func (m statusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.emptyStartedAt.IsZero() {
 					m.emptyStartedAt = time.Now()
 				}
-				return m, m.tickCmd()
+				return m, m.withSnapshot(m.tickCmd(), instancesChanged || recoveredFromRefreshError)
 			}
 			m.quitting = true
-			return m, deferQuit()
+			return m, deferStatusQuit()
 		}
 
 		m.emptyStartedAt = time.Time{}
@@ -303,18 +325,54 @@ func (m statusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if !m.monitoring {
 			m.quitting = true
-			return m, deferQuit()
+			return m, deferStatusQuit()
 		}
 
-		return m, m.tickCmd()
+		return m, m.withSnapshot(m.tickCmd(), instancesChanged || recoveredFromRefreshError)
 	}
 
 	return m, nil
 }
 
-func (m statusModel) View() string {
+func (m statusModel) View() tea.View {
+	if m.transcript {
+		if m.quitting {
+			return tea.NewView("")
+		}
+		return tea.NewView(m.liveFooter())
+	}
+	return tea.NewView(m.viewContent())
+}
+
+func (m statusModel) liveFooter() string {
+	// Keep the renderer-owned frame to one cell. A longer inline frame can
+	// soft-wrap before Bubble Tea receives the resize event, leaving its
+	// relative cursor position out of sync with the terminal.
+	if m.width < 2 {
+		return ""
+	}
+	return m.spinner.View()
+}
+
+func (m statusModel) printSnapshotCmd() tea.Cmd {
+	return tea.Println(strings.TrimSuffix(m.viewContent(), "\n"))
+}
+
+func writeStatusSnapshot(out io.Writer, m statusModel) error {
+	_, err := fmt.Fprintln(out, strings.TrimSuffix(m.viewContent(), "\n"))
+	return err
+}
+
+func (m statusModel) withSnapshot(cmd tea.Cmd, changed bool) tea.Cmd {
+	if !m.transcript || !changed {
+		return cmd
+	}
+	return tea.Batch(cmd, m.printSnapshotCmd())
+}
+
+func (m statusModel) viewContent() string {
 	if m.err != nil {
-		return errorStyleTUI.Render(fmt.Sprintf("✗ Error: %v\n", m.err))
+		return m.wrapText(errorStyleTUI.Render(fmt.Sprintf("✗ Error: %v", m.err))) + "\n"
 	}
 
 	var b strings.Builder
@@ -348,13 +406,13 @@ func (m statusModel) View() string {
 
 	if m.quitting {
 		timestamp := m.lastUpdate.Format("15:04:05")
-		b.WriteString(m.styles.timestamp.Render(fmt.Sprintf("Last updated: %s", timestamp)))
+		b.WriteString(m.wrapText(m.styles.timestamp.Render(fmt.Sprintf("Last updated: %s", timestamp))))
 		b.WriteString("\n")
 		return b.String()
 	}
 
 	if m.refreshErr != nil && !m.nextRetryAt.IsZero() {
-		b.WriteString(warningStyleTUI.Render(statusRefreshErrorMessage(m.refreshErr, m.nextRetryAt)))
+		b.WriteString(m.wrapText(warningStyleTUI.Render(statusRefreshErrorMessage(m.refreshErr, m.nextRetryAt))))
 		b.WriteString("\n")
 	}
 
@@ -364,9 +422,11 @@ func (m statusModel) View() string {
 		if len(m.instances) == 0 {
 			statusText = fmt.Sprintf("Last updated: %s; checking every %s", ts, formatRetryDelay(nextEmptyPollDelay(m.emptyStartedAt)))
 		}
-		b.WriteString(m.styles.timestamp.Render(statusText))
-		b.WriteString("  ")
-		b.WriteString(m.spinner.View())
+		liveStatus := m.styles.timestamp.Render(statusText)
+		if !m.transcript {
+			liveStatus += "  " + m.spinner.View()
+		}
+		b.WriteString(m.wrapText(liveStatus))
 		b.WriteString("\n")
 	}
 
@@ -394,19 +454,28 @@ func (m statusModel) View() string {
 
 	b.WriteString("\n")
 	if m.quitting {
-		b.WriteString(helpStyleTUI.Render("Closing...\n"))
+		b.WriteString(m.wrapText(helpStyleTUI.Render("Closing...")))
 	} else if m.monitoring {
-		b.WriteString(helpStyleTUI.Render("Press 'Q' to cancel monitoring\n"))
+		b.WriteString(m.wrapText(helpStyleTUI.Render("Press 'Q' to cancel monitoring")))
 	} else {
-		b.WriteString(helpStyleTUI.Render("Press 'Q' to close\n"))
+		b.WriteString(m.wrapText(helpStyleTUI.Render("Press 'Q' to close")))
 	}
+	b.WriteString("\n")
 
 	return b.String()
 }
 
+func (m statusModel) wrapText(text string) string {
+	if m.width <= 0 {
+		return text
+	}
+	return ansi.Wrap(text, m.width, "")
+}
+
 func (m statusModel) renderTable() string {
 	if len(m.instances) == 0 {
-		return warningStyleTUI.Render("⚠ No instances found. Use 'tnr create' to create a Thunder Compute instance.")
+		message := warningStyleTUI.Render("⚠ No instances found. Use 'tnr create' to create a Thunder Compute instance.")
+		return m.wrapText(message)
 	}
 
 	colWidths := map[string]int{
@@ -501,7 +570,7 @@ func (m statusModel) formatStatus(status string, width int) string {
 func (m *statusModel) ensureProgressBar(gpuType string) {
 	if _, exists := m.progressBars[gpuType]; !exists {
 		p := progress.New(
-			progress.WithSolidFill("#FFA500"),
+			progress.WithColors(color.RGBA{R: 0xff, G: 0xa5, A: 0xff}),
 			progress.WithWidth(70),
 		)
 		m.progressBars[gpuType] = p
@@ -763,6 +832,10 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
+func newStatusProgram(m tea.Model, options ...tea.ProgramOption) *tea.Program {
+	return tea.NewProgram(m, options...)
+}
+
 func RunStatus(client *api.Client, monitoring bool, instances []api.Instance, verbose bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -770,15 +843,16 @@ func RunStatus(client *api.Client, monitoring bool, instances []api.Instance, ve
 	InitCommonStyles(os.Stdout)
 
 	m := newStatusModel(client, monitoring, instances, verbose)
-	p := tea.NewProgram(
+	if m.transcript {
+		if err := writeStatusSnapshot(os.Stdout, m); err != nil {
+			return fmt.Errorf("write initial status snapshot: %w", err)
+		}
+	}
+	p := newStatusProgram(
 		m,
 		tea.WithContext(ctx),
 		tea.WithOutput(os.Stdout),
 	)
-
-	if monitoring {
-		disableResizeSignal()
-	}
 
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("error running status TUI: %w", err)

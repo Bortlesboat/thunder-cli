@@ -3,6 +3,7 @@ package tui
 import (
 	"io"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,6 +21,12 @@ var ErrNoRunningInstances = clierr.New("no running instances")
 
 // ErrNoChanges is returned when a modify operation has no changes to apply.
 var ErrNoChanges = clierr.New("no changes")
+
+type quitNow struct{}
+
+func deferQuit() tea.Cmd {
+	return tea.Tick(time.Millisecond, func(time.Time) tea.Msg { return quitNow{} })
+}
 
 var (
 	helpStyleTUI    lipgloss.Style
