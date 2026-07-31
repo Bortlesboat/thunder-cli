@@ -65,19 +65,8 @@ func PerformUpdate(ctx context.Context, src Source) error {
 		return fmt.Errorf("download asset: %w", err)
 	}
 
-	if expectedChecksum != "" {
-		if err := verifyChecksumValue(archivePath, expectedChecksum); err != nil {
-			return err
-		}
-	}
-
-	if checksumsURL != "" {
-		checksumsPath := filepath.Join(tmpDir, "checksums.txt")
-		if err := downloadFile(ctx, checksumsURL, checksumsPath); err == nil {
-			if err := verifyChecksum(archivePath, checksumsPath); err != nil {
-				return fmt.Errorf("checksum verification failed: %w", err)
-			}
-		}
+	if err := verifyArchiveChecksum(ctx, archivePath, expectedChecksum, checksumsURL, tmpDir); err != nil {
+		return err
 	}
 
 	extractedPath := filepath.Join(tmpDir, "tnr-extracted")
@@ -132,7 +121,13 @@ func resolveSource(_ context.Context, src Source) (downloadURL, assetName, check
 func verifyChecksumValue(filePath, expected string) error {
 	expected = strings.ToLower(strings.TrimSpace(expected))
 	if expected == "" {
-		return nil
+		return errors.New("checksum is required")
+	}
+	if len(expected) != sha256HexLength {
+		return fmt.Errorf("invalid SHA-256 checksum: expected %d hexadecimal characters", sha256HexLength)
+	}
+	if _, err := hex.DecodeString(expected); err != nil {
+		return fmt.Errorf("invalid SHA-256 checksum: %w", err)
 	}
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -146,6 +141,30 @@ func verifyChecksumValue(filePath, expected string) error {
 	actual := hex.EncodeToString(h.Sum(nil))
 	if !strings.EqualFold(actual, expected) {
 		return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+	}
+	return nil
+}
+
+const sha256HexLength = 64
+
+func verifyArchiveChecksum(ctx context.Context, archivePath, expectedChecksum, checksumsURL, tmpDir string) error {
+	if strings.TrimSpace(expectedChecksum) != "" {
+		if err := verifyChecksumValue(archivePath, expectedChecksum); err != nil {
+			return fmt.Errorf("checksum verification failed: %w", err)
+		}
+		return nil
+	}
+
+	if strings.TrimSpace(checksumsURL) == "" {
+		return errors.New("checksum verification required: no checksum or checksum URL provided")
+	}
+
+	checksumsPath := filepath.Join(tmpDir, "checksums.txt")
+	if err := downloadFile(ctx, checksumsURL, checksumsPath); err != nil {
+		return fmt.Errorf("download checksum: %w", err)
+	}
+	if err := verifyChecksum(archivePath, checksumsPath); err != nil {
+		return fmt.Errorf("checksum verification failed: %w", err)
 	}
 	return nil
 }
@@ -193,28 +212,23 @@ func downloadFile(ctx context.Context, url, dest string) error {
 }
 
 func verifyChecksum(filePath, checksumsPath string) error {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return err
-	}
-	sum := hex.EncodeToString(h.Sum(nil))
-
 	data, err := os.ReadFile(checksumsPath)
 	if err != nil {
 		return err
 	}
+	target := filepath.Base(filePath)
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
-		if strings.Contains(line, sum) {
-			return nil
+		parts := strings.Fields(strings.TrimSpace(line))
+		if len(parts) < 2 {
+			continue
+		}
+		name := strings.TrimPrefix(parts[len(parts)-1], "*")
+		if name == target || strings.HasSuffix(name, "/"+target) || strings.HasSuffix(name, "\\"+target) {
+			return verifyChecksumValue(filePath, parts[0])
 		}
 	}
-	return fmt.Errorf("sha256 %s not found in checksums", sum)
+	return fmt.Errorf("checksum for %s not found", target)
 }
 
 func extractArchive(archivePath, destDir string) error {
@@ -456,4 +470,3 @@ func removeOldBackupWithRetry(oldPath string) error {
 	}
 	return lastErr
 }
-

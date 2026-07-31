@@ -508,6 +508,16 @@ func handleOptionalUpdate(parentCtx context.Context, res updatepolicy.Result) {
 }
 
 func runSelfUpdate(ctx context.Context, res updatepolicy.Result) error {
+	// Refuse before downloading anything. autoupdate.PerformUpdate enforces this
+	// again on the archive itself; this is here so the user gets a message that
+	// names the real problem rather than a checksum error after a 100MB download.
+	if res.ChecksumUnavailable {
+		return fmt.Errorf(
+			"cannot verify the %s release archive, so it will not be installed: %w",
+			displayVersion(res.LatestVersion), res.ChecksumError,
+		)
+	}
+
 	source := autoupdate.Source{
 		Version:     res.LatestVersion,
 		ReleaseTag:  releaseTag(res),
