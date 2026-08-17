@@ -21,6 +21,7 @@ var snapshotListCmd = &cobra.Command{
 	},
 }
 var snapshotNoWait bool
+var snapshotListIsInteractive = tui.IsInteractive
 
 func init() {
 	snapshotListCmd.SetHelpFunc(wrapHelp(helpmenus.RenderSnapshotListHelp))
@@ -35,7 +36,7 @@ func runSnapshotList() error {
 		return err
 	}
 	monitoring := !snapshotNoWait
-	interactive := tui.IsInteractive() && !JSONOutput
+	interactive := snapshotListIsInteractive() && !JSONOutput
 
 	// Auto-disable monitoring in non-interactive mode
 	if monitoring && !interactive {
@@ -56,7 +57,7 @@ func runSnapshotList() error {
 		return nil
 	}
 
-	if !interactive {
+	if !interactive || snapshotNoWait {
 		renderPlainSnapshotTable(snapshots)
 		return nil
 	}

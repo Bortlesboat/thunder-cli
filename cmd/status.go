@@ -13,6 +13,7 @@ import (
 
 var noWait bool
 var verboseStatus bool
+var statusIsInteractive = tui.IsInteractive
 
 // statusCmd represents the status command
 var statusCmd = &cobra.Command{
@@ -38,7 +39,7 @@ func RunStatus() error {
 		return err
 	}
 	monitoring := !noWait
-	interactive := tui.IsInteractive() && !JSONOutput
+	interactive := statusIsInteractive() && !JSONOutput
 
 	// Auto-disable monitoring in non-interactive mode
 	if monitoring && !interactive {
@@ -59,7 +60,7 @@ func RunStatus() error {
 		return nil
 	}
 
-	if !interactive {
+	if !interactive || noWait {
 		renderPlainStatusTable(instances, verboseStatus)
 		return nil
 	}

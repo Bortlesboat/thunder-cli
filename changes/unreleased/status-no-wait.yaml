@@ -1,0 +1,3 @@
+kind: Fixed
+body: Make status and snapshot listing with --no-wait print once and exit in interactive terminals.
+time: 2026-08-17T19:59:37+10:00

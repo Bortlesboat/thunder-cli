@@ -14,13 +14,23 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-const cliHelperEnv = "TNR_CLI_HELPER_PROCESS"
+const (
+	cliHelperEnv                 = "TNR_CLI_HELPER_PROCESS"
+	cliHelperForceInteractiveEnv = "TNR_CLI_FORCE_INTERACTIVE"
+)
 
 func TestCLIHelperProcess(t *testing.T) {
 	if os.Getenv(cliHelperEnv) != "1" {
 		return
+	}
+	if os.Getenv(cliHelperForceInteractiveEnv) == "1" {
+		statusIsInteractive = func() bool { return true }
+		snapshotListIsInteractive = func() bool { return true }
 	}
 
 	separator := slices.Index(os.Args, "--")
@@ -29,6 +39,56 @@ func TestCLIHelperProcess(t *testing.T) {
 	}
 	os.Args = append([]string{"tnr"}, os.Args[separator+1:]...)
 	os.Exit(Execute())
+}
+
+func TestSnapshotListNoWaitExitsInInteractiveMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/snapshots/list":
+			_, _ = io.WriteString(w, `[{"id":"snapshot-1","name":"test-snapshot","minimumDiskSizeGb":100,"status":"READY","createdAt":1}]`)
+		case "/v1/user-data":
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result := runCLI(t, map[string]string{
+		cliHelperForceInteractiveEnv: "1",
+		"TNR_API_TOKEN":              "test-token",
+		"TNR_API_URL":                server.URL,
+	}, "snapshot", "list", "--no-wait")
+
+	require.Equal(t, 0, result.exitCode, "stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	assert.Contains(t, result.stdout, "test-snapshot")
+	assert.NotContains(t, result.stdout, "Press 'Q'")
+}
+
+func TestStatusNoWaitExitsInInteractiveMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/instances/list":
+			_, _ = io.WriteString(w, `{"0":{"id":"0","uuid":"test-uuid","status":"RUNNING","storage":100,"cpuCores":"6","gpuType":"a6000","numGpus":"1","memory":"48","template":"base"}}`)
+		case "/v1/user-data":
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result := runCLI(t, map[string]string{
+		cliHelperForceInteractiveEnv: "1",
+		"TNR_API_TOKEN":              "test-token",
+		"TNR_API_URL":                server.URL,
+	}, "status", "--no-wait")
+
+	require.Equal(t, 0, result.exitCode, "stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	assert.Contains(t, result.stdout, "test-uuid")
+	assert.NotContains(t, result.stdout, "Press 'Q'")
 }
 
 type cliResult struct {
