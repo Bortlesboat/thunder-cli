@@ -12,7 +12,7 @@
 [![Windows](https://img.shields.io/badge/Windows-supported-success)](#installation)
 
 `tnr` is the official command-line interface for Thunder Compute, a high-performance cloud GPU platform built for AI/ML prototyping and experimentation.
-Using a proprietary orchestration engine, Thunder Compute delivers fast provisioning, low-latency execution, and one of the most cost-effective GPU compute offerings available.
+Using a proprietary orchestration engine, Thunder Compute delivers fast provisioning, low-latency execution, and low-cost GPU compute designed for developer workflows.
 
 The `tnr` CLI supports:
 
