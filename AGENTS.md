@@ -50,7 +50,8 @@ Instance IDs are integers. Add `--json` for scripted/non-interactive usage.
 
 Every pull request that changes `cli/**` must add a Changie fragment under
 `cli/changes/unreleased/`. The generated release-preparation pull request is the
-only exception because it consumes all pending fragments.
+only exception because it consumes all pending fragments. The same rule applies
+to the CLI release workflows and Changie configuration.
 
 Use the fragment kind that matches the shipped user impact. Changie derives the
 SemVer bump automatically:
