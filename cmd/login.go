@@ -447,7 +447,7 @@ func runInteractiveLogin() error {
 			return "", err
 		}
 		return credentials.Token, nil
-	})
+	}, cancel)
 	p := tea.NewProgram(model)
 
 	if !manual {

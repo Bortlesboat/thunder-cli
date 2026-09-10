@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ func TestLoginRetriesInvalidInputWithoutRestarting(t *testing.T) {
 			return "", fmt.Errorf("invalid token; try again")
 		}
 		return "accepted-token", nil
-	})
+	}, nil)
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 	model = updated.(LoginModel)
 	model.tokenInput.SetValue("bad")
@@ -50,7 +51,7 @@ func TestLoginRetriesInvalidInputWithoutRestarting(t *testing.T) {
 }
 
 func TestLoginTimeoutKeepsManualEntryUsable(t *testing.T) {
-	model := NewLoginModel("https://example.com/login", false, nil)
+	model := NewLoginModel("https://example.com/login", false, nil, nil)
 	updated, _ := model.Update(loginErrorMsg{Err: fmt.Errorf("paste the token from your browser")})
 	model = updated.(LoginModel)
 	assert.Equal(t, LoginStateTokenInput, model.State())
@@ -61,10 +62,36 @@ func TestLoginTimeoutKeepsManualEntryUsable(t *testing.T) {
 }
 
 func TestLoginCancellationIgnoresLateValidation(t *testing.T) {
-	model := NewLoginModel("https://example.com/login", true, nil)
+	model := NewLoginModel("https://example.com/login", true, nil, nil)
 	model.state = LoginStateValidating
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	model = updated.(LoginModel)
 	updated, _ = model.Update(loginValidatedMsg{Token: "too-late"})
 	assert.Equal(t, LoginStateCancelled, updated.(LoginModel).State())
+}
+
+func TestLoginCancellationCancelsAuthenticationBeforeQuitting(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state LoginState
+		msg   tea.Msg
+	}{
+		{"validating ctrl+c", LoginStateValidating, tea.KeyMsg{Type: tea.KeyCtrlC}},
+		{"input ctrl+c", LoginStateTokenInput, tea.KeyMsg{Type: tea.KeyCtrlC}},
+		{"waiting escape", LoginStateWaiting, tea.KeyMsg{Type: tea.KeyEsc}},
+		{"waiting q", LoginStateWaiting, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")}},
+		{"waiting Q", LoginStateWaiting, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Q")}},
+		{"external cancellation", LoginStateWaiting, loginCancelMsg{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			model := NewLoginModel("https://example.com/login", false, nil, cancel)
+			model.state = tc.state
+			updated, quit := model.Update(tc.msg)
+			require.ErrorIs(t, ctx.Err(), context.Canceled)
+			assert.Equal(t, LoginStateCancelled, updated.(LoginModel).State())
+			require.NotNil(t, quit)
+		})
+	}
 }

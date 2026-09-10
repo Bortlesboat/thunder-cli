@@ -29,6 +29,7 @@ type LoginModel struct {
 	quitting     bool
 	manual       bool
 	authenticate func(string) (string, error)
+	cancel       func()
 
 	styles loginStyles
 }
@@ -65,7 +66,7 @@ func newLoginStyles() loginStyles {
 	}
 }
 
-func NewLoginModel(authURL string, manual bool, authenticate func(string) (string, error)) LoginModel {
+func NewLoginModel(authURL string, manual bool, authenticate func(string) (string, error), cancel func()) LoginModel {
 	styles := newLoginStyles()
 
 	ti := textinput.New()
@@ -86,6 +87,7 @@ func NewLoginModel(authURL string, manual bool, authenticate func(string) (strin
 		styles:       styles,
 		manual:       manual,
 		authenticate: authenticate,
+		cancel:       cancel,
 	}
 }
 
@@ -118,17 +120,13 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
-			m.state = LoginStateCancelled
-			m.quitting = true
-			return m, tea.Quit
+			return m.cancelLogin()
 		}
 		switch m.state {
 		case LoginStateWaiting:
 			switch msg.String() {
-			case "esc", "q", "Q", "ctrl+c":
-				m.state = LoginStateCancelled
-				m.quitting = true
-				return m, tea.Quit
+			case "esc", "q", "Q":
+				return m.cancelLogin()
 			case "t", "T":
 				m.state = LoginStateTokenInput
 				m.tokenInput.Focus()
@@ -172,9 +170,7 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.EnterAltScreen
 
 	case loginCancelMsg:
-		m.state = LoginStateCancelled
-		m.quitting = true
-		return m, tea.Quit
+		return m.cancelLogin()
 
 	case loginValidatedMsg:
 		if msg.Err != nil {
@@ -189,6 +185,15 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, cmd
+}
+
+func (m LoginModel) cancelLogin() (tea.Model, tea.Cmd) {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.state = LoginStateCancelled
+	m.quitting = true
+	return m, tea.Quit
 }
 
 func (m LoginModel) View() string {
