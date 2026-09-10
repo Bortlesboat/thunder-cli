@@ -133,6 +133,9 @@ const authSuccessHTML = `
 		<p class="message">
 			You can now close this window and return to your terminal.
 		</p>
+		{{if .Acknowledge}}
+		<script>window.parent.postMessage({type: "thunder-auth-complete", state: {{.State}}}, "https://console.thundercompute.com");</script>
+		{{end}}
 	</body>
 	</html>
 `
@@ -260,8 +263,10 @@ type AuthResponse struct {
 }
 
 type authPageData struct {
-	Error string
-	Theme string
+	Error       string
+	Theme       string
+	State       string
+	Acknowledge bool
 }
 
 type Config struct {
@@ -281,22 +286,22 @@ func getAPIURL() string {
 }
 
 var loginToken string
+var loginManual bool
 
 // loginCmd represents the login command
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with Thunder Compute",
 	Args:  wrapArgs(cobra.NoArgs),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runLogin()
-	},
 }
 
 func init() {
+	loginCmd.RunE = func(cmd *cobra.Command, args []string) error { return runLogin() }
 	loginCmd.SetHelpFunc(wrapHelp(helpmenus.RenderLoginHelp))
 
 	rootCmd.AddCommand(loginCmd)
 	loginCmd.Flags().StringVar(&loginToken, "token", "", "Authenticate directly with a token instead of opening browser")
+	loginCmd.Flags().BoolVar(&loginManual, "manual", false, "Finish login by pasting a token (selected automatically over SSH)")
 }
 
 func loginMessage(prefix string, result *api.ValidateTokenResult) string {
@@ -397,6 +402,16 @@ func runLogin() error {
 	return runInteractiveLogin()
 }
 
+func useManualLogin() bool {
+	if loginCmd.Flags().Changed("manual") {
+		return loginManual
+	}
+	if loginManual || os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_CLIENT") != "" || os.Getenv("SSH_TTY") != "" {
+		return true
+	}
+	return runtime.GOOS == "linux" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == ""
+}
+
 func runInteractiveLogin() error {
 	state, err := generateState()
 	if err != nil {
@@ -405,84 +420,75 @@ func runInteractiveLogin() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	port, authChan, errChan, cleanup, err := startCallbackServerWithContext(ctx, state)
-	if err != nil {
-		return fmt.Errorf("failed to start callback server: %w", err)
+	session := &loginSession{ctx: ctx}
+	manual := useManualLogin()
+	// Every existing OAuth and organization redirect preserves return_uri.
+	returnURI := callbackURL + "/callback?app=cli&handoff=manual"
+	var authChan <-chan AuthResponse
+	var errChan <-chan error
+	if !manual {
+		port, successes, failures, cleanup, err := startCallbackServerWithContext(ctx, state, session.authenticate)
+		if err != nil {
+			manual = true
+		} else {
+			defer cleanup()
+			authChan, errChan = successes, failures
+			returnURI = fmt.Sprintf("%s:%d/callback?app=cli&ack=1", callbackURL, port)
+		}
 	}
-	defer cleanup()
-
-	returnURI := fmt.Sprintf("%s:%d/callback", callbackURL, port)
 	authURLWithParams := buildAuthURL(state, returnURI)
 
-	model := tui.NewLoginModel(authURLWithParams)
+	model := tui.NewLoginModel(authURLWithParams, manual, func(input string) (string, error) {
+		credentials, err := parseLoginToken(input, state)
+		if err != nil {
+			return "", err
+		}
+		if err := session.authenticate(credentials); err != nil {
+			return "", err
+		}
+		return credentials.Token, nil
+	}, cancel)
 	p := tea.NewProgram(model)
 
-	go func() {
-		select {
-		case authResp := <-authChan:
-			tui.SendLoginSuccess(p, authResp.Token)
-		case err := <-errChan:
-			tui.SendLoginError(p, err)
-		case <-ctx.Done():
-			tui.SendLoginCancel(p)
-		case <-time.After(5 * time.Minute):
-			tui.SendLoginError(p, fmt.Errorf("authentication timeout - if you're using SSH, copy the token from your browser and press 'T' to enter it manually"))
+	if !manual {
+		go func() {
+			timer := time.NewTimer(5 * time.Minute)
+			defer timer.Stop()
+			for {
+				select {
+				case authResp := <-authChan:
+					tui.SendLoginSuccess(p, authResp.Token)
+					return
+				case err := <-errChan:
+					tui.SendLoginError(p, err)
+				case <-timer.C:
+					tui.SendLoginError(p, fmt.Errorf("automatic sign-in is still waiting; paste the token from your browser to continue"))
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		if err := openBrowser(authURLWithParams); err != nil {
+			fmt.Println("Open the link below in your browser to sign in.")
 		}
-	}()
-
-	if err := openBrowser(authURLWithParams); err != nil {
-		fmt.Printf("Failed to open browser automatically: %v\n", err)
 	}
 
 	finalModel, err := p.Run()
 	if err != nil {
-		if fm, ok := finalModel.(tui.LoginModel); ok {
-			model = fm
-		}
-		if model.State() == tui.LoginStateCancelled {
-			PrintWarningSimple("User cancelled authentication")
-			return nil
-		}
-		return fmt.Errorf("TUI error: %w", err)
+		return fmt.Errorf("login interface error: %w", err)
 	}
-
-	// Update model from the returned final state. The original model variable
-	// is a value copy that bubbletea never mutates — the real final state is
-	// only available from the p.Run() return value.
 	if fm, ok := finalModel.(tui.LoginModel); ok {
 		model = fm
 	}
 
 	if model.State() == tui.LoginStateSuccess {
-		token := model.Token()
-		client := api.NewClient(token, getAPIURL())
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		result, err := client.ValidateToken(ctx)
-		if err != nil {
-			return fmt.Errorf("token validation failed: %w", err)
-		}
-
-		authResp := AuthResponse{
-			Token: token,
-		}
-		if err := saveConfig(authResp); err != nil {
-			return fmt.Errorf("failed to save credentials: %w", err)
-		}
-		renderLoginOutput("logged_in", "Logged in", result, PrintSuccessSimple)
+		renderLoginOutput("logged_in", "Logged in", session.result, PrintSuccessSimple)
 		return nil
 	}
-
 	if model.State() == tui.LoginStateCancelled {
 		PrintWarningSimple("User cancelled authentication")
 		return nil
 	}
-	if model.State() == tui.LoginStateError {
-		return model.Error()
-	}
-
 	return usageErr("authentication failed")
 }
 
@@ -501,7 +507,7 @@ func buildAuthURL(state, returnURI string) string {
 	return fmt.Sprintf("%s?%s", authURL, params.Encode())
 }
 
-func startCallbackServerWithContext(ctx context.Context, expectedState string) (int, <-chan AuthResponse, <-chan error, func(), error) {
+func startCallbackServerWithContext(ctx context.Context, expectedState string, authenticate func(AuthResponse) error) (int, <-chan AuthResponse, <-chan error, func(), error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, nil, nil, nil, err
@@ -517,52 +523,58 @@ func startCallbackServerWithContext(ctx context.Context, expectedState string) (
 		Handler: mux,
 	}
 
+	reportError := func(err error) {
+		select {
+		case errChan <- err:
+		default:
+		}
+	}
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		theme := callbackTheme(r)
-		token := r.URL.Query().Get("token")
-		refreshToken := r.URL.Query().Get("refresh_token")
-		errorParam := r.URL.Query().Get("error")
-
-		if errorParam != "" {
-			errChan <- fmt.Errorf("authentication error: %s", errorParam)
-			w.Header().Set("Content-Type", "text/html")
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = authFailedTemplate.Execute(w, authPageData{Error: errorParam, Theme: theme}) //nolint:errcheck // template execution error is non-fatal
-			return
-		}
-
-		// Validate the state parameter to prevent login CSRF. The state was
-		// generated locally and round-tripped through the browser; a mismatch
-		// means the callback did not originate from the flow we started.
-		if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("state")), []byte(expectedState)) != 1 {
-			errChan <- fmt.Errorf("invalid state parameter (possible CSRF)")
-			w.Header().Set("Content-Type", "text/html")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = authFailedTemplate.Execute(w, authPageData{Error: "Invalid state parameter", Theme: theme}) //nolint:errcheck // template execution error is non-fatal
-			return
-		}
-
-		if token == "" {
-			errChan <- fmt.Errorf("no token received")
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, "No token received")
-			return
-		}
-
-		authResp := AuthResponse{
-			Token:        token,
-			RefreshToken: refreshToken,
-		}
-
-		authChan <- authResp
-
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "text/html")
-		_ = authSuccessTemplate.Execute(w, authPageData{Theme: theme}) //nolint:errcheck // template execution error is non-fatal
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		theme := callbackTheme(r)
+		fail := func(code int, message string) {
+			reportError(fmt.Errorf("%s", message))
+			w.WriteHeader(code)
+			_ = authFailedTemplate.Execute(w, authPageData{Error: message, Theme: theme})
+		}
+		params := r.URL.Query()
+		if len(params["state"]) != 1 || subtle.ConstantTimeCompare([]byte(params.Get("state")), []byte(expectedState)) != 1 {
+			fail(http.StatusBadRequest, "invalid state parameter; use the link from the current login")
+			return
+		}
+		if params.Get("error") != "" {
+			fail(http.StatusUnauthorized, "browser authentication did not complete; open the login link and try again")
+			return
+		}
+		if len(params["token"]) != 1 || params.Get("token") == "" {
+			fail(http.StatusBadRequest, "no token received; finish signing in with your browser")
+			return
+		}
+		authResp := AuthResponse{Token: params.Get("token"), RefreshToken: params.Get("refresh_token")}
+		if err := authenticate(authResp); err != nil {
+			fail(http.StatusUnauthorized, err.Error())
+			return
+		}
+
+		_ = authSuccessTemplate.Execute(w, authPageData{
+			Theme: theme, State: expectedState, Acknowledge: params.Get("ack") == "1",
+		})
+		select {
+		case authChan <- authResp:
+		case <-ctx.Done():
+		default:
+		}
 	})
 
 	go func() {
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			errChan <- err
+			reportError(err)
 		}
 	}()
 
@@ -596,7 +608,11 @@ func openBrowser(url string) error {
 		return usageErr("unsupported platform")
 	}
 
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 func saveConfig(authResp AuthResponse) error {

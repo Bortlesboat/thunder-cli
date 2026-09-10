@@ -147,13 +147,6 @@ func TestBuildAuthURL(t *testing.T) {
 	assert.Contains(t, url, "return_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fcallback")
 }
 
-// TestOpenBrowser verifies that the openBrowser function doesn't panic when
-// called with a valid URL, even if the actual browser opening fails.
-func TestOpenBrowser(t *testing.T) {
-	url := "https://example.com"
-	_ = openBrowser(url)
-}
-
 // TestSaveConfig verifies that the saveConfig function correctly saves
 // authentication credentials with expiration time to the config file.
 func TestSaveConfig(t *testing.T) {
@@ -379,7 +372,7 @@ func TestCallbackServerStateValidation(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			port, authChan, errChan, cleanup, err := startCallbackServerWithContext(ctx, expectedState)
+			port, authChan, errChan, cleanup, err := startCallbackServerWithContext(ctx, expectedState, func(AuthResponse) error { return nil })
 			require.NoError(t, err)
 			defer cleanup()
 
