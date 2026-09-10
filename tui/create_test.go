@@ -19,6 +19,25 @@ func createTestSpecStore() *utils.SpecStore {
 	})
 }
 
+func TestCreateGPUReselectionShowsGPUCount(t *testing.T) {
+	specs := utils.NewSpecStore(map[string]api.GpuSpecConfig{
+		"a6000_x1": {GpuCount: 1, VcpuOptions: []int{4, 8}},
+		"l40_x1":   {GpuCount: 1, VcpuOptions: []int{6, 8, 12}},
+		"l40_x2":   {GpuCount: 2, VcpuOptions: []int{12, 16, 24}},
+	})
+	m := NewCreateModel(nil, specs)
+	for _, key := range []tea.KeyType{tea.KeyEnter, tea.KeyEsc, tea.KeyDown, tea.KeyEnter} {
+		model, _ := m.Update(tea.KeyMsg{Type: key})
+		m = model.(createModel)
+	}
+	if m.step != stepCompute || m.config.GPUType != "l40" || m.config.NumGPUs != 0 {
+		t.Fatalf("expected L40 with no GPU count selected, got step=%v config=%+v", m.step, m.config)
+	}
+	if view := m.View(); !strings.Contains(view, "Select number of GPUs:") || !strings.Contains(view, "2 GPU(s)") {
+		t.Fatalf("expected GPU count selection after switching from A6000 to L40, got:\n%s", view)
+	}
+}
+
 func TestCreateDefaultDiskSizeUsesFreeStoragePerGPU(t *testing.T) {
 	m := NewCreateModel(nil, createTestSpecStore())
 	m.config.GPUType = "h100"

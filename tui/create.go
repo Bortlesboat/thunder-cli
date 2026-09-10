@@ -654,6 +654,9 @@ func (m createModel) handleEnter() (tea.Model, tea.Cmd) {
 		if !m.specs.IsGPUTypeAvailable(gpus[m.cursor]) {
 			return m, nil
 		}
+		m.config.NumGPUs = 0
+		m.config.VCPUs = 0
+		m.gpuCountPhase = false
 		m.config.GPUType = gpus[m.cursor]
 		m.step = stepCompute
 		return m, m.trySkipCurrentStep()
