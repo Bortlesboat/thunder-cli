@@ -1,3 +1,0 @@
-kind: Fixed
-body: Prevent file transfers from hanging on an unrelated SSH agent by using only the saved instance key.
-time: 2026-09-16T00:00:00+10:00

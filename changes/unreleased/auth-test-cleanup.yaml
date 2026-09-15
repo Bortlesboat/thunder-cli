@@ -1,3 +1,0 @@
-kind: Internal
-body: Keep authentication tests focused on credential safety and remove redundant coverage.
-time: 2026-09-07T12:00:00+10:00
