@@ -391,17 +391,21 @@ func runInteractiveLogin() error {
 	if err != nil {
 		return fmt.Errorf("failed to generate state: %w", err)
 	}
+	authURLWithParams := "https://console.thundercompute.com/settings/tokens"
 	configCtx, configCancel := context.WithTimeout(ctx, 10*time.Second)
 	oauthConfig, err := credentials.FetchOAuthConfig(configCtx, getAPIURL())
 	configCancel()
 	if err != nil {
-		return fmt.Errorf("failed to load CLI OAuth configuration: %w", err)
+		if !manual {
+			return fmt.Errorf("failed to load CLI OAuth configuration: %w", err)
+		}
+	} else {
+		authorizationURL, err := url.Parse(oauthConfig.AuthorizationURL)
+		if err != nil {
+			return fmt.Errorf("failed to parse authorization URL: %w", err)
+		}
+		authURLWithParams = authorizationURL.ResolveReference(&url.URL{Path: "/settings/tokens"}).String()
 	}
-	authorizationURL, err := url.Parse(oauthConfig.AuthorizationURL)
-	if err != nil {
-		return fmt.Errorf("failed to parse authorization URL: %w", err)
-	}
-	authURLWithParams := authorizationURL.ResolveReference(&url.URL{Path: "/settings/tokens"}).String()
 	var callbackChan <-chan oauthCallback
 	var errChan <-chan error
 	if !manual {
