@@ -34,6 +34,8 @@ type Source struct {
 	ExpectedSize int64
 }
 
+var ErrChecksumMismatch = errors.New("checksum mismatch")
+
 // PerformUpdate downloads, verifies and installs the target version.
 // When src.AssetURL is empty, the updater falls back to GitHub releases using src.ReleaseTag.
 func PerformUpdate(ctx context.Context, src Source) error {
@@ -140,7 +142,7 @@ func verifyChecksumValue(filePath, expected string) error {
 	}
 	actual := hex.EncodeToString(h.Sum(nil))
 	if !strings.EqualFold(actual, expected) {
-		return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+		return fmt.Errorf("%w: expected %s, got %s", ErrChecksumMismatch, expected, actual)
 	}
 	return nil
 }

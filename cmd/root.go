@@ -469,28 +469,30 @@ func handleOptionalUpdate(parentCtx context.Context, res updatepolicy.Result) {
 		return
 	}
 
-	lastAttempt, err := updatepolicy.ReadOptionalUpdateAttempt()
+	lastAttempt, err := updatepolicy.ReadOptionalUpdateAttempt(res.LatestVersion)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: unable to read optional update cache: %v\n", err)
 	}
 	if !lastAttempt.IsZero() && time.Since(lastAttempt) < updatepolicy.OptionalUpdateTTL {
-		fmt.Printf("ℹ️  Update available: %s → %s. Automatic update skipped (last attempt %s). Reinstall from the latest release to update now.\n",
+		fmt.Printf("Update available: %s → %s. Automatic update skipped (last attempt %s). Run 'tnr update' to retry now.\n",
 			displayVersion(res.CurrentVersion), displayVersion(res.LatestVersion), lastAttempt.Format(time.RFC1123))
 		return
 	}
 
-	fmt.Printf("Automatically updating to %s. Please wait...\n", displayVersion(res.LatestVersion))
+	if !res.ChecksumUnavailable {
+		fmt.Printf("Automatically updating to %s. Please wait...\n", displayVersion(res.LatestVersion))
+	}
 
-	attemptTime := time.Now()
 	updateCtx, cancel := context.WithTimeout(parentCtx, 5*time.Minute)
 	defer cancel()
 
 	updateErr := runSelfUpdate(updateCtx, res)
-	if writeErr := updatepolicy.WriteOptionalUpdateAttempt(attemptTime); writeErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to record optional update attempt: %v\n", writeErr)
-	}
-
 	if updateErr != nil {
+		if !res.ChecksumUnavailable {
+			if err := updatepolicy.WriteOptionalUpdateAttempt(res.LatestVersion, time.Now()); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to record optional update attempt: %v\n", err)
+			}
+		}
 		sentry.WithScope(func(scope *sentry.Scope) {
 			scope.SetTag("operation", "optional_update")
 			scope.SetTag("current_version", res.CurrentVersion)
@@ -524,7 +526,18 @@ func runSelfUpdate(ctx context.Context, res updatepolicy.Result) error {
 		Checksum:    res.ExpectedSHA256,
 		ChecksumURL: res.ChecksumURL,
 	}
-	return autoupdate.PerformUpdate(ctx, source)
+	if err := autoupdate.PerformUpdate(ctx, source); err != nil {
+		if errors.Is(err, autoupdate.ErrChecksumMismatch) {
+			if cacheErr := updatepolicy.ClearChecksumCache(res.LatestVersion); cacheErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to clear cached checksum: %v\n", cacheErr)
+			}
+		}
+		return err
+	}
+	if err := updatepolicy.ClearOptionalUpdateAttempt(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to clear optional update cache: %v\n", err)
+	}
+	return nil
 }
 
 func releaseTag(res updatepolicy.Result) string {

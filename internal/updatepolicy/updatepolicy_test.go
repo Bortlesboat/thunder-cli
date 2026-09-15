@@ -249,7 +249,7 @@ func TestOptionalUpdateCacheHelpers(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
-	ts, err := ReadOptionalUpdateAttempt()
+	ts, err := ReadOptionalUpdateAttempt("1.2.3")
 	if err != nil {
 		t.Fatalf("initial read: %v", err)
 	}
@@ -258,11 +258,11 @@ func TestOptionalUpdateCacheHelpers(t *testing.T) {
 	}
 
 	now := time.Unix(1700000000, 0).UTC()
-	if err := WriteOptionalUpdateAttempt(now); err != nil {
+	if err := WriteOptionalUpdateAttempt("1.2.3", now); err != nil {
 		t.Fatalf("write attempt: %v", err)
 	}
 
-	readBack, err := ReadOptionalUpdateAttempt()
+	readBack, err := ReadOptionalUpdateAttempt("1.2.3")
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestOptionalUpdateCacheHelpers(t *testing.T) {
 	if err := ClearOptionalUpdateAttempt(); err != nil {
 		t.Fatalf("clear optional cache: %v", err)
 	}
-	finalRead, err := ReadOptionalUpdateAttempt()
+	finalRead, err := ReadOptionalUpdateAttempt("1.2.3")
 	if err != nil {
 		t.Fatalf("final read: %v", err)
 	}

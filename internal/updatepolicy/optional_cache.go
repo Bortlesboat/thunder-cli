@@ -12,16 +12,15 @@ const (
 	optionalCacheFile = "optional_update_status.json"
 	optionalCacheDir  = ".thunder"
 	optionalCacheSub  = "cache"
-	OptionalUpdateTTL = 24 * time.Hour
+	OptionalUpdateTTL = time.Hour
 )
 
 type optionalCachePayload struct {
+	Version     string    `json:"version"`
 	LastAttempt time.Time `json:"last_attempt"`
 }
 
-// ReadOptionalUpdateAttempt returns the timestamp of the last optional update attempt.
-// If no attempt has been recorded, the returned time is zero.
-func ReadOptionalUpdateAttempt() (time.Time, error) {
+func ReadOptionalUpdateAttempt(version string) (time.Time, error) {
 	path, err := optionalCachePath()
 	if err != nil {
 		return time.Time{}, err
@@ -37,11 +36,13 @@ func ReadOptionalUpdateAttempt() (time.Time, error) {
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return time.Time{}, err
 	}
+	if payload.Version == "" || payload.Version != normalizeVersion(version) {
+		return time.Time{}, nil
+	}
 	return payload.LastAttempt, nil
 }
 
-// WriteOptionalUpdateAttempt records the provided timestamp as the last optional update attempt.
-func WriteOptionalUpdateAttempt(ts time.Time) error {
+func WriteOptionalUpdateAttempt(version string, ts time.Time) error {
 	path, err := optionalCachePath()
 	if err != nil {
 		return err
@@ -50,6 +51,7 @@ func WriteOptionalUpdateAttempt(ts time.Time) error {
 		return err
 	}
 	payload := optionalCachePayload{
+		Version:     normalizeVersion(version),
 		LastAttempt: ts.UTC(),
 	}
 	data, err := json.Marshal(payload)

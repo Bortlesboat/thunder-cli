@@ -1,0 +1,3 @@
+kind: Internal
+body: Add a reproducible local self-update check using the published CLI, disposable binaries, and simulated release failures.
+time: 2026-09-15T12:00:00+10:00

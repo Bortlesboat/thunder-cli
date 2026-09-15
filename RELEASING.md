@@ -50,3 +50,9 @@ make deploy-cli
 Deployment verifies that the version, current release notes, and changelog agree
 before building or publishing. GitHub receives the versioned Changie notes; it
 no longer attempts to infer notes from the exported subtree history.
+
+## Test self-updates before publishing
+
+Run `make test-cli-update` from the monorepo root. This requires Python 3.11+, Bazel, GitHub CLI, and a local Linux Docker engine. It downloads and verifies the published v2.0.71 Linux executable, builds the current branch as test versions 2.0.72 and 2.0.73, and exercises both upgrades through the real `tnr update` command. Use `python3 cli/scripts/test-self-update.py --released-version X.Y.Z` to choose another published starting version; the two test builds use the next two patch numbers.
+
+The checks run in a disposable container with external networking disabled. A loopback HTTP server supplies release metadata, archives, checksums, and instance status responses. Failure cases verify command continuation, exit codes, retry timing, checksum-cache recovery, and preservation of the existing executable. The harness prints each command and retains the binaries and `run.log` in the temporary directory it reports. Native macOS and Windows installation behavior requires separate checks on those operating systems.

@@ -1,0 +1,3 @@
+kind: Fixed
+body: Retry failed updates after one hour per version, refresh stale checksums, and allow immediate retries with tnr update.
+time: 2026-09-15T12:00:00+10:00

@@ -720,6 +720,21 @@ func writeChecksumCacheUnavailable(version, osName, url string) error {
 	})
 }
 
+func ClearChecksumCache(version string) error {
+	version = normalizeVersion(version)
+	for _, candidate := range []string{version, "v" + version, "V" + version} {
+		name := fmt.Sprintf(checksumsCacheTemplate, candidate, detectPlatform().OS)
+		path, err := cachePath(name)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
 func cachePath(name string) (string, error) {
 	dir, err := os.UserCacheDir()
 	if err != nil || dir == "" {
