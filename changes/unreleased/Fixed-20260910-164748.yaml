@@ -1,3 +1,0 @@
-kind: Fixed
-body: Show GPU count selection again when reselecting a GPU type in interactive tnr create, while honoring valid command-line presets.
-time: 2026-09-10T16:47:48.431766+10:00

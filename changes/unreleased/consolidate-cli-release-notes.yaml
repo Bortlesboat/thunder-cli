@@ -1,3 +1,0 @@
-kind: Internal
-body: Consolidate CLI release-note rules into cli/AGENTS.md; the root AGENTS.md now points here instead of duplicating them.
-time: 2026-08-28T18:47:30+00:00

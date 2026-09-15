@@ -1,3 +1,0 @@
-kind: Fixed
-body: Make status --no-wait display the same styled table and last-updated timestamp as monitoring, then exit immediately.
-time: 2026-09-15T12:00:00+10:00

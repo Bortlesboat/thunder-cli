@@ -1,3 +1,0 @@
-kind: Added
-body: Sign in from SSH and headless machines with automatic manual-login instructions and --manual. Paste a token or callback URL, and retry errors without restarting login.
-time: 2026-09-10T12:00:00+10:00
