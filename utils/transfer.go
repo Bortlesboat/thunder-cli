@@ -121,7 +121,7 @@ func wrapTransferError(err error, upload bool) error {
 
 func rsyncTransfer(ctx context.Context, keyFile, ip string, port int, localPath, remotePath string, upload bool, stdout, stderr io.Writer) error {
 	remote := fmt.Sprintf("ubuntu@%s:%s", ip, remotePath)
-	sshCmd := fmt.Sprintf("ssh -i %s -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=30", keyFile, port)
+	sshCmd := fmt.Sprintf("ssh -i %s -p %d -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=30", keyFile, port)
 	args := []string{"-az", "--progress", "-e", sshCmd, localPath, remote}
 	if !upload {
 		args = []string{"-az", "--progress", "-e", sshCmd, remote, localPath}
@@ -134,9 +134,9 @@ func rsyncTransfer(ctx context.Context, keyFile, ip string, port int, localPath,
 
 func scpTransfer(ctx context.Context, keyFile, ip string, port int, localPath, remotePath string, upload bool, stdout, stderr io.Writer) error {
 	remote := fmt.Sprintf("ubuntu@%s:%s", ip, remotePath)
-	args := []string{"-i", keyFile, "-P", fmt.Sprintf("%d", port), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=30", "-r", localPath, remote}
+	args := []string{"-i", keyFile, "-P", fmt.Sprintf("%d", port), "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=30", "-r", localPath, remote}
 	if !upload {
-		args = []string{"-i", keyFile, "-P", fmt.Sprintf("%d", port), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=30", "-r", remote, localPath}
+		args = []string{"-i", keyFile, "-P", fmt.Sprintf("%d", port), "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=30", "-r", remote, localPath}
 	}
 	cmd := exec.CommandContext(ctx, "scp", args...)
 	cmd.Stdout = stdout
