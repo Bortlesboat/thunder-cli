@@ -51,6 +51,8 @@ Deployment verifies that the version, current release notes, and changelog agree
 before building or publishing. GitHub receives the versioned Changie notes; it
 no longer attempts to infer notes from the exported subtree history.
 
+Windows-only publishing requires an existing release and a readable, valid checksum file. It replaces checksums for rebuilt artifacts and preserves the remaining entries; lookup or validation failures stop publication. Runs for the same version are serialized through workflow concurrency.
+
 ## Test self-updates before publishing
 
 Run `make test-cli-update` from the monorepo root. This requires Python 3.11+, Bazel, GitHub CLI, and a local Linux Docker engine. It downloads and verifies the published v2.0.71 Linux executable, builds the current branch as test versions 2.0.72 and 2.0.73, and exercises both upgrades through the real `tnr update` command. Use `python3 cli/scripts/test-self-update.py --released-version X.Y.Z` to choose another published starting version; the two test builds use the next two patch numbers.

@@ -1,0 +1,3 @@
+kind: Fixed
+body: Preserve macOS and Linux checksums when rebuilding Windows assets, and stop publishing if the existing release cannot be verified.
+time: 2026-09-15T12:00:00+10:00
