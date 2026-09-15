@@ -47,11 +47,17 @@ func RunStatus() error {
 	}
 
 	var instances []api.Instance
-	if err := tui.RunWithBusySpinner("Fetching instances...", os.Stdout, func() error {
+	fetch := func() error {
 		var e error
 		instances, e = client.ListInstances()
 		return e
-	}); err != nil {
+	}
+	if noWait {
+		err = fetch()
+	} else {
+		err = tui.RunWithBusySpinner("Fetching instances...", os.Stdout, fetch)
+	}
+	if err != nil {
 		return fmt.Errorf("failed to fetch instances: %w", err)
 	}
 
@@ -60,7 +66,7 @@ func RunStatus() error {
 		return nil
 	}
 
-	if !interactive || noWait {
+	if !interactive {
 		renderPlainStatusTable(instances, verboseStatus)
 		return nil
 	}

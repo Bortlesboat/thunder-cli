@@ -791,12 +791,17 @@ func truncate(s string, maxLen int) string {
 }
 
 func RunStatus(client *api.Client, monitoring bool, instances []api.Instance, verbose bool) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	InitCommonStyles(os.Stdout)
 
 	m := newStatusModel(client, monitoring, instances, verbose)
+	if !monitoring {
+		m.quitting = true
+		return writeStatusSnapshot(os.Stdout, m)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	if m.runtime.transcript {
 		if err := writeStatusSnapshot(os.Stdout, m); err != nil {
 			return fmt.Errorf("write initial status snapshot: %w", err)
