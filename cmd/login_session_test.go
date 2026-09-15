@@ -59,14 +59,14 @@ func TestCallbackRetriesAndAcknowledgesOnlySavedCredentials(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"email":"member@example.com","org_name":"Example"}`)
+		_, _ = io.WriteString(w, `{"credential_type":"api_token","email":"member@example.com","org_name":"Example"}`)
 	}))
 	defer apiServer.Close()
 	t.Setenv("TNR_API_URL", apiServer.URL)
 	t.Setenv("TNR_HOME", t.TempDir())
 	t.Setenv("TNR_API_TOKEN", "")
 	session := &loginSession{ctx: context.Background()}
-	port, successes, _, cleanup, err := startCallbackServerWithContext(session.ctx, "current-state", session.authenticate)
+	port, successes, _, cleanup, err := startCallbackServerWithContext(session.ctx, "current-state", func(code string) error { return session.authenticate(AuthResponse{Token: code}) })
 	require.NoError(t, err)
 	defer cleanup()
 	httpClient := &http.Client{Timeout: time.Second}
@@ -83,29 +83,29 @@ func TestCallbackRetriesAndAcknowledgesOnlySavedCredentials(t *testing.T) {
 		return string(body)
 	}
 	for range 3 {
-		body := request("state=stale&token=wrong&ack=1", http.StatusBadRequest)
+		body := request("state=stale&code=wrong&ack=1", http.StatusBadRequest)
 		assert.NotContains(t, body, "postMessage")
 	}
 	assert.Zero(t, validations.Load())
-	body := request("state=current-state&token=bad-token&ack=1", http.StatusUnauthorized)
+	body := request("state=current-state&code=bad-token&ack=1", http.StatusUnauthorized)
 	assert.NotContains(t, body, "postMessage")
 	_, err = LoadConfig()
 	require.Error(t, err)
 
-	body = request("state=current-state&token=good-token&ack=1", http.StatusOK)
+	body = request("state=current-state&code=good-token&ack=1", http.StatusOK)
 	assert.Contains(t, body, `state: "current-state"`)
 	assert.Contains(t, body, "thunder-auth-complete")
 	assert.Contains(t, body, "https://console.thundercompute.com")
 	config, err := LoadConfig()
 	require.NoError(t, err)
 	assert.Equal(t, "good-token", config.Token)
-	assert.Equal(t, "good-token", (<-successes).Token)
+	assert.Equal(t, "good-token", (<-successes).Code)
 
 	// Repeated browser and manual delivery must not validate or save again.
-	request("state=current-state&token=good-token&ack=1", http.StatusOK)
+	request("state=current-state&code=good-token&ack=1", http.StatusOK)
 	require.NoError(t, session.authenticate(AuthResponse{Token: "good-token"}))
 	assert.EqualValues(t, 2, validations.Load())
-	body = request("state=current-state&token=good-token", http.StatusOK)
+	body = request("state=current-state&code=good-token", http.StatusOK)
 	assert.NotContains(t, body, "postMessage")
 }
 
@@ -117,7 +117,7 @@ func TestConcurrentLoginCompletionSavesOnce(t *testing.T) {
 		validations.Add(1)
 		started <- struct{}{}
 		<-release
-		_, _ = io.WriteString(w, `{"email":"member@example.com"}`)
+		_, _ = io.WriteString(w, `{"credential_type":"api_token","email":"member@example.com"}`)
 	}))
 	defer apiServer.Close()
 	t.Setenv("TNR_API_URL", apiServer.URL)

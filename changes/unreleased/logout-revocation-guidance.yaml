@@ -1,0 +1,3 @@
+kind: Fixed
+body: Clarify how to clear local credentials and check member-wide CLI access when logout revocation cannot authenticate.
+time: 2026-09-07T00:00:00+10:00

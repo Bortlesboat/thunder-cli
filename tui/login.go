@@ -30,12 +30,26 @@ type LoginModel struct {
 	manual       bool
 	authenticate func(string) (string, error)
 	cancel       func()
+	source       LoginCredentialSource
 
 	styles loginStyles
 }
 
+type LoginCredentialSource int
+
+const (
+	LoginCredentialSourceUnknown LoginCredentialSource = iota
+	LoginCredentialSourceBrowser
+	LoginCredentialSourceManual
+)
+
+type LoginCompletion struct {
+	Token  string
+	Source LoginCredentialSource
+}
+
 type loginSuccessMsg struct {
-	Token string
+	LoginCompletion
 }
 
 type loginErrorMsg struct {
@@ -70,7 +84,7 @@ func NewLoginModel(authURL string, manual bool, authenticate func(string) (strin
 	styles := newLoginStyles()
 
 	ti := textinput.New()
-	ti.Placeholder = "Paste your token or callback URL..."
+	ti.Placeholder = "Paste your named API token..."
 	ti.CharLimit = 0
 	ti.EchoMode = textinput.EchoPassword
 	ti.Width = 50
@@ -98,12 +112,12 @@ func (m LoginModel) Init() tea.Cmd {
 	instructions.WriteString(theme.Label().Underline(true).Render(m.authURL))
 	instructions.WriteString("\n\n")
 	if m.manual {
-		instructions.WriteString("After signing in, copy the token shown in your browser.")
+		instructions.WriteString("Create a named API token in Console Settings, then paste it here.")
 	} else {
-		instructions.WriteString("Waiting for browser sign-in. If this terminal is still waiting, copy the token shown in your browser.")
+		instructions.WriteString("Waiting for browser sign-in. You can also paste a named API token from Console Settings.")
 	}
 	instructions.WriteString("\n")
-	instructions.WriteString(m.styles.help.Render("Press 'T' to paste a token or callback URL. Press 'Q' to cancel."))
+	instructions.WriteString(m.styles.help.Render("Press 'T' to paste a named API token. Press 'Q' to cancel."))
 
 	// Keep the waiting screen outside Bubble Tea's live renderer. The terminal
 	// can then reflow every line on resize without leaving stale render rows,
@@ -157,6 +171,7 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loginSuccessMsg:
 		m.state = LoginStateSuccess
 		m.token = msg.Token
+		m.source = msg.Source
 		m.quitting = true
 		return m, tea.Quit
 
@@ -180,6 +195,7 @@ func (m LoginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.state = LoginStateSuccess
 		m.token = msg.Token
+		m.source = LoginCredentialSourceManual
 		m.quitting = true
 		return m, tea.Quit
 	}
@@ -203,7 +219,7 @@ func (m LoginModel) View() string {
 
 	var b strings.Builder
 	if m.state == LoginStateTokenInput || m.state == LoginStateValidating {
-		b.WriteString(m.styles.prompt.Render("Paste your token or callback URL:"))
+		b.WriteString(m.styles.prompt.Render("Paste your named API token:"))
 		b.WriteString("\n")
 		b.WriteString(m.styles.input.Render(m.tokenInput.View()))
 		if m.err != nil {
@@ -230,13 +246,20 @@ func (m LoginModel) Token() string {
 	return m.tokenInput.Value()
 }
 
+func (m LoginModel) Completion() LoginCompletion {
+	return LoginCompletion{
+		Token:  m.Token(),
+		Source: m.source,
+	}
+}
+
 func (m LoginModel) Error() error {
 	return m.err
 }
 
-func SendLoginSuccess(p *tea.Program, token string) {
+func SendLoginSuccess(p *tea.Program, completion LoginCompletion) {
 	if p != nil {
-		p.Send(loginSuccessMsg{Token: token})
+		p.Send(loginSuccessMsg{LoginCompletion: completion})
 	}
 }
 

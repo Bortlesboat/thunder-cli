@@ -1,0 +1,3 @@
+kind: Fixed
+body: Allow login to recover after CLI access is revoked in Connected Apps.
+time: 2026-09-04T12:00:00+10:00

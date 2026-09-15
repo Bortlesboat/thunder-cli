@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Thunder-Compute/thunder-cli/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,17 +19,18 @@ import (
 // credentials to the config file with proper token, refresh token, and expiration time.
 func TestLoginSuccess(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("TNR_HOME", "")
 	originalHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", originalHome)
 	os.Setenv("HOME", tmpDir)
 
+	expiresAt := time.Now().UTC().Add(3600 * time.Second)
 	authResp := AuthResponse{
 		Token:        "valid_token_12345",
 		RefreshToken: "refresh_token_67890",
-		ExpiresIn:    3600,
 	}
 
-	err := saveConfig(authResp)
+	err := saveConfig(authResp, CredentialSourceProvidedToken, &api.ValidateTokenResult{ExpiresAt: &expiresAt})
 	require.NoError(t, err)
 
 	configPath := filepath.Join(tmpDir, ".thunder", "cli_config.json")
@@ -43,6 +45,7 @@ func TestLoginSuccess(t *testing.T) {
 
 	assert.Equal(t, "valid_token_12345", config.Token)
 	assert.Equal(t, "refresh_token_67890", config.RefreshToken)
+	require.NotNil(t, config.ExpiresAt)
 	assert.True(t, config.ExpiresAt.After(time.Now()))
 }
 
@@ -50,6 +53,7 @@ func TestLoginSuccess(t *testing.T) {
 // credentials from the config file and handles missing config files appropriately.
 func TestLoadConfig(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("TNR_HOME", "")
 	originalHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", originalHome)
 	os.Setenv("HOME", tmpDir)
@@ -86,6 +90,7 @@ func TestLoadConfig(t *testing.T) {
 // prioritizes the TNR_API_TOKEN environment variable over the saved config file.
 func TestLoadConfigFromEnvironmentVariable(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("TNR_HOME", "")
 	originalHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", originalHome)
 	os.Setenv("HOME", tmpDir)
@@ -127,41 +132,29 @@ func TestGenerateState(t *testing.T) {
 	state1, err := generateState()
 	require.NoError(t, err)
 	assert.NotEmpty(t, state1)
-	assert.Len(t, state1, 44)
+	assert.Len(t, state1, 43)
 
 	state2, err := generateState()
 	require.NoError(t, err)
 	assert.NotEqual(t, state1, state2)
 }
 
-// TestBuildAuthURL verifies that the buildAuthURL function correctly constructs
-// OAuth authentication URLs with proper state and return URI parameters.
-func TestBuildAuthURL(t *testing.T) {
-	state := "test_state_123"
-	returnURI := "http://127.0.0.1:8080/callback"
-
-	url := buildAuthURL(state, returnURI)
-
-	assert.Contains(t, url, "https://console.thundercompute.com/login/app")
-	assert.Contains(t, url, "state=test_state_123")
-	assert.Contains(t, url, "return_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fcallback")
-}
-
 // TestSaveConfig verifies that the saveConfig function correctly saves
 // authentication credentials with expiration time to the config file.
 func TestSaveConfig(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("TNR_HOME", "")
 	originalHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", originalHome)
 	os.Setenv("HOME", tmpDir)
 
+	expiresAt := time.Now().UTC().Add(7200 * time.Second)
 	authResp := AuthResponse{
 		Token:        "test_token",
 		RefreshToken: "test_refresh",
-		ExpiresIn:    7200,
 	}
 
-	err := saveConfig(authResp)
+	err := saveConfig(authResp, CredentialSourceProvidedToken, &api.ValidateTokenResult{ExpiresAt: &expiresAt})
 	require.NoError(t, err)
 
 	configPath := filepath.Join(tmpDir, ".thunder", "cli_config.json")
@@ -176,13 +169,15 @@ func TestSaveConfig(t *testing.T) {
 
 	assert.Equal(t, "test_token", config.Token)
 	assert.Equal(t, "test_refresh", config.RefreshToken)
+	require.NotNil(t, config.ExpiresAt)
 	assert.True(t, config.ExpiresAt.After(time.Now().Add(7000*time.Second)))
 }
 
-// TestSaveConfigWithExpiration verifies that the saveConfig function correctly
+// TestSaveConfigWithoutExpiration verifies that the saveConfig function correctly
 // handles authentication credentials without expiration time.
-func TestSaveConfigWithExpiration(t *testing.T) {
+func TestSaveConfigWithoutExpiration(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("TNR_HOME", "")
 	originalHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", originalHome)
 	os.Setenv("HOME", tmpDir)
@@ -190,10 +185,9 @@ func TestSaveConfigWithExpiration(t *testing.T) {
 	authResp := AuthResponse{
 		Token:        "test_token",
 		RefreshToken: "test_refresh",
-		ExpiresIn:    0,
 	}
 
-	err := saveConfig(authResp)
+	err := saveConfig(authResp, CredentialSourceProvidedToken, nil)
 	require.NoError(t, err)
 
 	configPath := filepath.Join(tmpDir, ".thunder", "cli_config.json")
@@ -206,13 +200,14 @@ func TestSaveConfigWithExpiration(t *testing.T) {
 
 	assert.Equal(t, "test_token", config.Token)
 	assert.Equal(t, "test_refresh", config.RefreshToken)
-	assert.True(t, config.ExpiresAt.IsZero())
+	assert.Nil(t, config.ExpiresAt)
 }
 
 // TestSaveConfigCreatesDirectory verifies that the saveConfig function creates
 // the necessary .thunder directory structure when it doesn't exist.
 func TestSaveConfigCreatesDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("TNR_HOME", "")
 	originalHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", originalHome)
 	os.Setenv("HOME", tmpDir)
@@ -221,7 +216,7 @@ func TestSaveConfigCreatesDirectory(t *testing.T) {
 		Token: "test_token",
 	}
 
-	err := saveConfig(authResp)
+	err := saveConfig(authResp, CredentialSourceProvidedToken, nil)
 	require.NoError(t, err)
 
 	thunderDir := filepath.Join(tmpDir, ".thunder")
@@ -243,7 +238,7 @@ func TestSaveConfigPermissionError(t *testing.T) {
 
 	t.Setenv("TNR_HOME", blocker)
 
-	err := saveConfig(AuthResponse{Token: "test_token"})
+	err := saveConfig(AuthResponse{Token: "test_token"}, CredentialSourceProvidedToken, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not a directory")
 }
@@ -261,7 +256,7 @@ func TestSaveConfigFallback(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmpDir, "cache"))
 	t.Setenv("TNR_HOME", "")
 
-	require.NoError(t, saveConfig(AuthResponse{Token: "test_token"}))
+	require.NoError(t, saveConfig(AuthResponse{Token: "test_token"}, CredentialSourceProvidedToken, nil))
 
 	// Config must have landed in the UserCacheDir fallback, not under $HOME/.thunder.
 	cacheBase, err := os.UserCacheDir()
@@ -272,18 +267,20 @@ func TestSaveConfigFallback(t *testing.T) {
 // TestLoginCommandTableDriven provides comprehensive test coverage for various
 // authentication scenarios including successful logins with and without expiration.
 func TestLoginCommandTableDriven(t *testing.T) {
+	expiresAt := time.Now().UTC().Add(time.Hour)
 	tests := []struct {
 		name          string
 		authResp      AuthResponse
+		expiresAt     *time.Time
 		expectError   bool
 		errorContains string
 	}{
 		{
-			name: "successful login with expiration",
+			name:      "successful login with expiration",
+			expiresAt: &expiresAt,
 			authResp: AuthResponse{
 				Token:        "valid_token",
 				RefreshToken: "refresh_token",
-				ExpiresIn:    3600,
 			},
 			expectError: false,
 		},
@@ -292,7 +289,6 @@ func TestLoginCommandTableDriven(t *testing.T) {
 			authResp: AuthResponse{
 				Token:        "valid_token",
 				RefreshToken: "refresh_token",
-				ExpiresIn:    0,
 			},
 			expectError: false,
 		},
@@ -309,11 +305,12 @@ func TestLoginCommandTableDriven(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
+			t.Setenv("TNR_HOME", "")
 			originalHome := os.Getenv("HOME")
 			defer os.Setenv("HOME", originalHome)
 			os.Setenv("HOME", tmpDir)
 
-			err := saveConfig(tt.authResp)
+			err := saveConfig(tt.authResp, CredentialSourceProvidedToken, &api.ValidateTokenResult{ExpiresAt: tt.expiresAt})
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -333,36 +330,37 @@ func TestLoginCommandTableDriven(t *testing.T) {
 
 				assert.Equal(t, tt.authResp.Token, config.Token)
 				assert.Equal(t, tt.authResp.RefreshToken, config.RefreshToken)
+				assert.Equal(t, tt.expiresAt, config.ExpiresAt)
 			}
 		})
 	}
 }
 
 // TestCallbackServerStateValidation verifies that the local OAuth callback
-// server accepts a token only when the returned state matches the state the
-// login flow generated, guarding against login CSRF.
+// server accepts an authorization code only when the returned state matches
+// the state the login flow generated, guarding against login CSRF.
 func TestCallbackServerStateValidation(t *testing.T) {
 	const expectedState = "expected_state_value_abc123"
 
 	tests := []struct {
 		name       string
 		query      string
-		wantToken  string
+		wantCode   string
 		wantErrMsg string
 	}{
 		{
-			name:      "matching state accepts token",
-			query:     fmt.Sprintf("token=good_token&state=%s", expectedState),
-			wantToken: "good_token",
+			name:     "matching state accepts code",
+			query:    fmt.Sprintf("code=good_code&state=%s", expectedState),
+			wantCode: "good_code",
 		},
 		{
 			name:       "mismatched state is rejected",
-			query:      "token=attacker_token&state=wrong_state",
+			query:      "code=attacker_code&state=wrong_state",
 			wantErrMsg: "invalid state parameter",
 		},
 		{
 			name:       "missing state is rejected",
-			query:      "token=attacker_token",
+			query:      "code=attacker_code",
 			wantErrMsg: "invalid state parameter",
 		},
 	}
@@ -372,7 +370,7 @@ func TestCallbackServerStateValidation(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			port, authChan, errChan, cleanup, err := startCallbackServerWithContext(ctx, expectedState, func(AuthResponse) error { return nil })
+			port, callbackChan, errChan, cleanup, err := startCallbackServerWithContext(ctx, expectedState, func(string) error { return nil })
 			require.NoError(t, err)
 			defer cleanup()
 
@@ -382,11 +380,11 @@ func TestCallbackServerStateValidation(t *testing.T) {
 			_ = resp.Body.Close()
 
 			select {
-			case authResp := <-authChan:
-				require.Empty(t, tt.wantErrMsg, "expected an error but token was accepted")
-				assert.Equal(t, tt.wantToken, authResp.Token)
+			case callback := <-callbackChan:
+				require.Empty(t, tt.wantErrMsg, "expected an error but code was accepted")
+				assert.Equal(t, tt.wantCode, callback.Code)
 			case cbErr := <-errChan:
-				require.NotEmpty(t, tt.wantErrMsg, "expected token acceptance but got error: %v", cbErr)
+				require.NotEmpty(t, tt.wantErrMsg, "expected code acceptance but got error: %v", cbErr)
 				assert.Contains(t, cbErr.Error(), tt.wantErrMsg)
 			case <-time.After(2 * time.Second):
 				t.Fatal("timed out waiting for callback result")

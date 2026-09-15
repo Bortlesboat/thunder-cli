@@ -29,21 +29,21 @@ func RenderLoginHelp(cmd *cobra.Command) {
 	output.WriteString("  ")
 	output.WriteString(CommandStyle.Render("Token"))
 	output.WriteString("   ")
-	output.WriteString(DescStyle.Render("tnr login --token <your_token_id>"))
+	output.WriteString(DescStyle.Render("tnr login --token <named_api_token>"))
 	output.WriteString("\n\n")
 
 	// Examples Section
 	output.WriteString(SectionStyle.Render("● EXAMPLES"))
 	output.WriteString("\n\n")
 	output.WriteString("  ")
-	output.WriteString(ExampleStyle.Render("# Interactive browser authentication"))
+	output.WriteString(ExampleStyle.Render("# Browser authentication with a dedicated CLI credential"))
 	output.WriteString("\n")
 	output.WriteString("  ")
 	output.WriteString(CommandTextStyle.Render("tnr login"))
 	output.WriteString("\n\n")
 
 	output.WriteString("  ")
-	output.WriteString(ExampleStyle.Render("# Direct token authentication"))
+	output.WriteString(ExampleStyle.Render("# Named API token authentication for headless environments"))
 	output.WriteString("\n")
 	output.WriteString("  ")
 	output.WriteString(CommandTextStyle.Render("tnr login --token abc123xyz789"))
@@ -62,7 +62,7 @@ func RenderLoginHelp(cmd *cobra.Command) {
 	output.WriteString("  ")
 	output.WriteString(FlagStyle.Render("--token"))
 	output.WriteString("   ")
-	output.WriteString(DescStyle.Render("Authenticate directly with a token instead of opening browser"))
+	output.WriteString(DescStyle.Render("Authenticate with a named API token instead of opening a browser"))
 	output.WriteString("\n\n")
 
 	output.WriteString("  ")

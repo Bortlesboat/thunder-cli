@@ -45,20 +45,46 @@ func (e *APIError) UserFacing() bool {
 }
 
 type Client struct {
-	baseURL    string
-	token      string
-	httpClient *http.Client
+	baseURL                    string
+	tokenSource                TokenSource
+	httpClient                 *http.Client
+	authenticationErrorMessage string
 }
 
+// TokenSource supplies an access token immediately before each API request.
+type TokenSource interface {
+	Token(ctx context.Context) (string, error)
+}
+
+// RefreshingTokenSource can rotate a credential after an authenticated API
+// request rejects the exact token that was sent.
+type RefreshingTokenSource interface {
+	TokenSource
+	Refresh(ctx context.Context, rejectedToken string) (string, error)
+}
+
+type staticTokenSource string
+
+func (s staticTokenSource) Token(context.Context) (string, error) { return string(s), nil }
+
 func NewClient(token, baseURL string) *Client {
+	return NewClientWithTokenSource(staticTokenSource(token), baseURL)
+}
+
+func NewClientWithTokenSource(tokenSource TokenSource, baseURL string) *Client {
 	return &Client{
-		baseURL: baseURL,
-		token:   token,
+		baseURL:                    baseURL,
+		tokenSource:                tokenSource,
+		authenticationErrorMessage: "authentication failed: invalid token",
 		httpClient: &http.Client{
 			Timeout:   30 * time.Second,
 			Transport: sentryhttpclient.NewSentryRoundTripper(nil),
 		},
 	}
+}
+
+func (c *Client) SetAuthenticationErrorMessage(message string) {
+	c.authenticationErrorMessage = message
 }
 
 func (c *Client) doRequest(ctx context.Context, method, path string, body, result interface{}) error {
@@ -68,21 +94,44 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body, resul
 		Level:    sentry.LevelInfo,
 	})
 
-	var bodyReader io.Reader
+	var bodyData []byte
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("failed to marshal request: %w", err)
 		}
-		bodyReader = bytes.NewReader(data)
+		bodyData = data
 	}
 
+	token, err := c.tokenSource.Token(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load authentication token: %w", err)
+	}
+	err = c.doRequestWithToken(ctx, method, path, bodyData, result, token)
+	var apiErr *APIError
+	refreshing, canRefresh := c.tokenSource.(RefreshingTokenSource)
+	if !canRefresh || !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnauthorized {
+		return err
+	}
+
+	refreshedToken, refreshErr := refreshing.Refresh(ctx, token)
+	if refreshErr != nil {
+		return refreshErr
+	}
+	return c.doRequestWithToken(ctx, method, path, bodyData, result, refreshedToken)
+}
+
+func (c *Client) doRequestWithToken(ctx context.Context, method, path string, bodyData []byte, result interface{}, token string) error {
+	var bodyReader io.Reader
+	if bodyData != nil {
+		bodyReader = bytes.NewReader(bodyData)
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Thunder-Client", "GO-CLI")
 	req.Header.Set("Version", version.BuildVersion)
@@ -113,7 +162,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body, resul
 
 	if resp.StatusCode >= 400 {
 		if resp.StatusCode == 401 {
-			return &APIError{StatusCode: 401, Message: "authentication failed: invalid token"}
+			return &APIError{StatusCode: 401, Message: c.authenticationErrorMessage}
 		}
 		retryAfter, hasRetryAfter := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 		apiErr := &APIError{
@@ -190,6 +239,10 @@ func (c *Client) ValidateToken(ctx context.Context) (*ValidateTokenResult, error
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (c *Client) RevokeCLIOAuthGrant(ctx context.Context) error {
+	return c.doRequest(ctx, http.MethodDelete, "/v1/auth/cli/grant", nil, nil)
 }
 
 // GetSubscriptionStatusCtx returns the caller's Stripe subscription status

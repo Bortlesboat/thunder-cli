@@ -89,7 +89,10 @@ func runSCP(sources []string, destination string) error {
 		return err
 	}
 
-	client := api.NewClient(config.Token, config.APIURL)
+	client, err := newAuthenticatedClient(config)
+	if err != nil {
+		return fmt.Errorf("failed to load saved credentials: %w", err)
+	}
 	instances, err := client.ListInstances()
 	if err != nil {
 		return utils.WrapAPIError(err, "failed to list instances")

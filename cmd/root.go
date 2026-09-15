@@ -600,8 +600,17 @@ func kickoffSubscriptionCheck(cmd *cobra.Command) {
 	if err != nil || cfg == nil || cfg.Token == "" {
 		return
 	}
-	client := api.NewClient(cfg.Token, cfg.APIURL)
-	go pastdue.Refresh(context.Background(), client)
+	go refreshSubscriptionStatus(context.Background(), cfg)
+}
+
+func refreshSubscriptionStatus(ctx context.Context, cfg *Config) {
+	apiURL, err := authenticatedAPIURL(cfg)
+	if err != nil {
+		return
+	}
+	// The CLI can exit mid-request, so background checks must not rotate refresh tokens.
+	client := api.NewClient(cfg.Token, apiURL)
+	pastdue.Refresh(ctx, client)
 }
 
 func showCachedSubscriptionWarning(cmd *cobra.Command) {

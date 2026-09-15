@@ -1,0 +1,3 @@
+kind: Fixed
+body: Prevent simultaneous browser and manual login completions from mixing credential sources.
+time: 2026-09-04T12:00:00+10:00

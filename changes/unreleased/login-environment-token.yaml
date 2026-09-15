@@ -1,0 +1,3 @@
+kind: Fixed
+body: Prevent login from reporting success when an invalid TNR_API_TOKEN would continue overriding newly saved credentials.
+time: 2026-09-04T12:00:00+10:00

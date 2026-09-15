@@ -10,43 +10,58 @@ import (
 	"time"
 
 	"github.com/Thunder-Compute/thunder-cli/api"
+	"github.com/Thunder-Compute/thunder-cli/internal/credentials"
+	"github.com/Thunder-Compute/thunder-cli/tui"
 )
 
 type loginSession struct {
-	mu     sync.Mutex
-	ctx    context.Context
-	token  string
-	result *api.ValidateTokenResult
+	mu            sync.Mutex
+	ctx           context.Context
+	completionKey string
+	result        *api.ValidateTokenResult
 }
 
-func (s *loginSession) authenticate(credentials AuthResponse) error {
+func (s *loginSession) authenticate(credential AuthResponse) error {
+	return s.complete("token:"+credential.Token, func(ctx context.Context) (*api.ValidateTokenResult, error) {
+		return completeInteractiveLogin(ctx, getAPIURL(), credentials.OAuthConfig{}, tui.LoginCompletion{
+			Token: credential.Token, Source: tui.LoginCredentialSourceManual,
+		}, nil)
+	})
+}
+
+func (s *loginSession) authenticateBrowser(config credentials.OAuthConfig, code, redirectURI, verifier string) error {
+	return s.complete("code:"+code, func(ctx context.Context) (*api.ValidateTokenResult, error) {
+		response, err := credentials.ExchangeAuthorizationCode(ctx, config, code, redirectURI, verifier)
+		if err != nil {
+			return nil, fmt.Errorf("authorization code exchange failed: %w", err)
+		}
+		tokens := make(chan *credentials.TokenResponse, 1)
+		tokens <- response
+		return completeInteractiveLogin(ctx, getAPIURL(), config, tui.LoginCompletion{
+			Token: response.AccessToken, Source: tui.LoginCredentialSourceBrowser,
+		}, tokens)
+	})
+}
+
+func (s *loginSession) complete(key string, authenticate func(context.Context) (*api.ValidateTokenResult, error)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	if err := s.ctx.Err(); err != nil {
 		return err
 	}
 	if s.result != nil {
-		if s.token == credentials.Token {
+		if s.completionKey == key {
 			return nil
 		}
 		return fmt.Errorf("this login has already completed")
 	}
-
-	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(s.ctx, 15*time.Second)
 	defer cancel()
-	result, err := api.NewClient(credentials.Token, getAPIURL()).ValidateToken(ctx)
+	result, err := authenticate(ctx)
 	if err != nil {
-		return fmt.Errorf("could not verify the token: %w; check the token or your connection and try again", err)
-	}
-	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := saveConfig(credentials); err != nil {
-		return fmt.Errorf("could not save credentials: %w", err)
-	}
-	s.token = credentials.Token
-	s.result = result
+	s.completionKey, s.result = key, result
 	return nil
 }
 

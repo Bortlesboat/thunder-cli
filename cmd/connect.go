@@ -39,11 +39,11 @@ type sshClient interface {
 	Close() error
 }
 
-func resolveConnectClient(opts *connectOptions, token, baseURL string) api.ConnectClient {
+func resolveConnectClient(opts *connectOptions, config *Config) (api.ConnectClient, error) {
 	if opts != nil && opts.client != nil {
-		return opts.client
+		return opts.client, nil
 	}
-	return api.NewClient(token, baseURL)
+	return newAuthenticatedClient(config)
 }
 
 func resolveSessionRunner(opts *connectOptions) func(ctx context.Context, cfg utils.SessionConfig) error {
@@ -124,7 +124,10 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 	skipTTYCheck := opts != nil && opts.skipTTYCheck
 	interactive := (skipTTYCheck || tui.IsInteractive()) && !JSONOutput
 
-	client := resolveConnectClient(opts, config.Token, config.APIURL)
+	client, err := resolveConnectClient(opts, config)
+	if err != nil {
+		return fmt.Errorf("failed to load saved credentials: %w", err)
+	}
 
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -631,41 +634,6 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 
 	phaseTimings["ssh_connection"] = time.Since(phase4Start)
 	tui.SendPhaseComplete(p, 1, phaseTimings["ssh_connection"])
-
-	phase5Start := time.Now()
-	logProgress("Setting up instance...")
-	tui.SendPhaseUpdate(p, 2, tui.PhaseInProgress, "Setting up instance...", 0)
-
-	if checkCancelled() {
-		return nil
-	}
-
-	sentry.AddBreadcrumb(&sentry.Breadcrumb{
-		Category: "connect",
-		Message:  "setting up token",
-		Level:    sentry.LevelInfo,
-	})
-
-	tui.SendPhaseUpdate(p, 2, tui.PhaseInProgress, "Setting up token...", 0)
-	if err := utils.SetupToken(sshClient, config.Token); err != nil {
-		sentry.AddBreadcrumb(&sentry.Breadcrumb{
-			Category: "connect",
-			Message:  "token setup failed",
-			Data: map[string]interface{}{
-				"error": err.Error(),
-			},
-			Level: sentry.LevelError,
-		})
-		shutdownTUI()
-		return fmt.Errorf("failed to set up token: %w", err)
-	}
-
-	if checkCancelled() {
-		return nil
-	}
-
-	phaseTimings["instance_setup"] = time.Since(phase5Start)
-	tui.SendPhaseComplete(p, 2, phaseTimings["instance_setup"])
 
 	// Update SSH config for easy reconnection via `ssh tnr-{instance_id}`
 	templatePorts := utils.GetTemplateOpenPorts(instance.Template)

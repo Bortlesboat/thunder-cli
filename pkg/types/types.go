@@ -220,9 +220,20 @@ type EnvironmentTemplate struct {
 // ThunderTemplatesResponse is the response from the /thunder-templates endpoint.
 type ThunderTemplatesResponse map[string]EnvironmentTemplate
 
+// CredentialType identifies the server-validated kind of bearer credential.
+type CredentialType string
+
+const (
+	CredentialTypeStytchSession CredentialType = "stytch_session"
+	CredentialTypeAPIToken      CredentialType = "api_token"
+	CredentialTypeCLIOAuth      CredentialType = "cli_oauth"
+)
+
 // ValidateTokenResponse represents the response from token validation.
 type ValidateTokenResponse struct {
-	Valid   bool   `json:"valid"`
-	Email   string `json:"email,omitempty"`
-	OrgName string `json:"org_name,omitempty"`
+	Valid          bool           `json:"valid"`
+	Email          string         `json:"email,omitempty"`
+	OrgName        string         `json:"org_name,omitempty"`
+	CredentialType CredentialType `json:"credential_type,omitempty"`
+	ExpiresAt      *time.Time     `json:"expires_at,omitempty"`
 }

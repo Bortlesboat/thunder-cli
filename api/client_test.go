@@ -24,7 +24,6 @@ func TestNewClient(t *testing.T) {
 
 	assert.NotNil(t, client)
 	assert.Equal(t, baseURL, client.baseURL)
-	assert.Equal(t, token, client.token)
 }
 
 func TestCreateInstanceRequest(t *testing.T) {
@@ -201,7 +200,6 @@ func TestNewClientWithCustomURL(t *testing.T) {
 
 	assert.NotNil(t, client)
 	assert.Equal(t, customURL, client.baseURL)
-	assert.Equal(t, token, client.token)
 }
 
 func TestClientSendsAuditContextHeaders(t *testing.T) {

@@ -73,7 +73,6 @@ func NewConnectFlowModel(instanceID string) ConnectFlowModel {
 	phases := []Phase{
 		{Name: "SSH key management", Status: PhasePending},
 		{Name: "Establishing SSH connection", Status: PhasePending},
-		{Name: "Setting up instance", Status: PhasePending},
 	}
 
 	styles := connectFlowStyles{

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -12,6 +13,13 @@ func PrintError(err error) {
 		return
 	}
 	if JSONOutput {
+		var structuredError interface {
+			JSONErrorOutput() any
+		}
+		if errors.As(err, &structuredError) {
+			printJSON(structuredError.JSONErrorOutput())
+			return
+		}
 		printJSON(map[string]string{"error": err.Error()})
 		return
 	}

@@ -21,5 +21,5 @@ func getAuthenticatedClient() (*api.Client, error) {
 	if config.Token == "" {
 		return nil, usageErr("no authentication token found. Please run 'tnr login'")
 	}
-	return api.NewClient(config.Token, config.APIURL), nil
+	return newAuthenticatedClient(config)
 }

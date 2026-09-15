@@ -1,11 +1,13 @@
 package cmd
 
 import (
-	"strings"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/Thunder-Compute/thunder-cli/api"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestInstanceStatus verifies that instance status values are correctly
@@ -65,15 +67,28 @@ func TestInstanceFields(t *testing.T) {
 // 	t.Skip("Skipping status command validation test - Args function issues")
 // }
 
-// TestRunStatus verifies that the RunStatus function handles
-// non-interactive mode correctly: it either succeeds (if authenticated)
-// or returns an auth error (if not). No TTY error should occur.
 func TestRunStatus(t *testing.T) {
-	err := RunStatus()
-	if err != nil {
-		errStr := err.Error()
-		isAuthError := strings.Contains(errStr, "not authenticated") || strings.Contains(errStr, "authentication")
-		assert.True(t, isAuthError, "Expected auth error or nil, got: %v", err)
+	previousInteractive := statusIsInteractive
+	statusIsInteractive = func() bool { return false }
+	t.Cleanup(func() { statusIsInteractive = previousInteractive })
+	for _, status := range []int{http.StatusOK, http.StatusUnauthorized} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/instances/list", r.URL.Path)
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(server.Close)
+			t.Setenv("TNR_API_TOKEN", "test-token")
+			t.Setenv("TNR_API_URL", server.URL)
+			err := RunStatus()
+			if status == http.StatusOK {
+				require.NoError(t, err)
+			} else {
+				var apiErr *api.APIError
+				require.ErrorAs(t, err, &apiErr)
+				assert.Equal(t, http.StatusUnauthorized, apiErr.StatusCode)
+			}
+		})
 	}
-	// nil is acceptable — means the status was fetched and printed in non-interactive mode
 }
