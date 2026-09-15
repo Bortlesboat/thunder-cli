@@ -490,10 +490,7 @@ func handleOptionalUpdate(parentCtx context.Context, res updatepolicy.Result) {
 		fmt.Fprintf(os.Stderr, "Warning: failed to record optional update attempt: %v\n", writeErr)
 	}
 
-	if updateErr == nil {
-		fmt.Printf("Updated tnr to %s.\n", displayVersion(res.LatestVersion))
-	} else {
-		// Capture optional update failures to Sentry
+	if updateErr != nil {
 		sentry.WithScope(func(scope *sentry.Scope) {
 			scope.SetTag("operation", "optional_update")
 			scope.SetTag("current_version", res.CurrentVersion)
@@ -502,8 +499,10 @@ func handleOptionalUpdate(parentCtx context.Context, res updatepolicy.Result) {
 			sentry.CaptureException(updateErr)
 		})
 		fmt.Fprintf(os.Stderr, "Warning: optional update failed: %v\n", updateErr)
-		fmt.Printf("You can download the latest version from GitHub: https://github.com/Thunder-Compute/thunder-cli/releases/tag/%s and reinstall the CLI.\n", releaseTag(res))
+		fmt.Fprintln(os.Stderr, "Run 'tnr update' to retry now. Continuing with your command.")
+		return
 	}
+	fmt.Printf("Updated tnr to %s. Please re-run your command.\n", displayVersion(res.LatestVersion))
 	os.Exit(0)
 }
 
