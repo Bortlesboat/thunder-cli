@@ -1,0 +1,3 @@
+kind: Fixed
+body: Verify release archive checksums before publishing and validate complete release artifacts during dry runs.
+time: 2026-09-15T12:00:00+10:00

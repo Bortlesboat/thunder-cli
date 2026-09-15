@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -85,6 +86,15 @@ def validate(artifacts: Path, version: str, published: Path | None) -> None:
     if missing:
         raise ValueError("Missing archive checksums: " + ", ".join(sorted(missing)))
 
+    for name, expected in new_entries.items():
+        path = artifacts / name
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"Checksum references a missing or non-regular artifact: {name}")
+        with path.open("rb") as archive:
+            actual = hashlib.file_digest(archive, "sha256").hexdigest()
+        if actual != expected:
+            raise ValueError(f"Checksum mismatch for {name}: expected {expected}, got {actual}")
+
     combined = {}
     if published:
         release = json.loads((published / "release.json").read_text())
@@ -123,11 +133,11 @@ def validate(artifacts: Path, version: str, published: Path | None) -> None:
     temporary.replace(output)
     for part in parts:
         part.unlink()
-    print(f"Validated release metadata; wrote {len(combined)} checksum entries.")
+    print(f"Verified {len(new_entries)} artifacts; wrote {len(combined)} checksum entries.")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate CLI release artifacts and combine their checksums.")
+    parser = argparse.ArgumentParser(description="Verify CLI release artifacts and combine their checksums.")
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--version", required=True, help="Release version without the v prefix")
     parser.add_argument("--published", type=Path, help="Existing release.json and checksums.txt for Windows-only publishing")

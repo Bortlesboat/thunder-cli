@@ -51,6 +51,8 @@ Deployment verifies that the version, current release notes, and changelog agree
 before building or publishing. GitHub receives the versioned Changie notes; it
 no longer attempts to infer notes from the exported subtree history.
 
+The release workflow verifies the SHA-256 of every artifact listed in the build checksum files before publishing. Full releases must include all six updater archives, and stable releases must have a manifest that references the corresponding release assets. Manual runs with `dry_run` enabled perform the same validation and skip publication.
+
 Windows-only publishing requires an existing release and a readable, valid checksum file. It replaces checksums for rebuilt artifacts and preserves the remaining entries; lookup or validation failures stop publication. Runs for the same version are serialized through workflow concurrency.
 
 ## Test self-updates before publishing
