@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
-	"charm.land/bubbles/v2/spinner"
-	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type progressResultMsg struct{}
@@ -15,17 +16,17 @@ type progressResultMsg struct{}
 // instead of constructing a Bubble Tea program or depending on its final model
 // type.
 type progressModel struct {
-	runtime               inlineRuntime
+	message               string
 	spinner               spinner.Model
 	task                  *backgroundTask
 	done                  bool
 	cancellationRequested bool
 }
 
-func newProgressModel(task *backgroundTask) progressModel {
+func newProgressModel(message string, task *backgroundTask) progressModel {
 	return progressModel{
-		runtime: newInlineRuntime(true),
-		spinner: NewPrimarySpinnerV2(),
+		message: message,
+		spinner: NewPrimarySpinner(),
 		task:    task,
 	}
 }
@@ -38,10 +39,6 @@ func (m progressModel) Init() tea.Cmd {
 
 func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.runtime.update(msg)
-		return m, nil
-
 	case spinner.TickMsg:
 		if m.done {
 			return m, nil
@@ -54,53 +51,51 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.done = true
 		return m, tea.Quit
 
-	case tea.KeyPressMsg:
+	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "Q", "esc":
-			if m.cancellationRequested {
-				return m, nil
-			}
 			m.cancellationRequested = true
-			return m, m.runtime.print("Operation is already in progress; waiting for it to finish.")
+			return m, nil
 		}
 	}
 
 	return m, nil
 }
 
-func (m progressModel) View() tea.View {
-	return m.runtime.view(m.spinner.View(), m.done)
+func (m progressModel) View() string {
+	if m.done {
+		return ""
+	}
+	message := m.message
+	if m.cancellationRequested {
+		message += "\n Operation is already in progress; waiting for it to finish."
+	}
+	return fmt.Sprintf("\n %s %s\n", m.spinner.View(), message)
 }
 
-// RunProgress runs a mutating operation with a one-cell v2 progress renderer.
-// It owns the Bubble Tea program and does not return until the operation has
-// completed, even if the user interrupts the renderer. API mutations cannot be
-// safely abandoned because their clients do not expose cancellation-aware
-// methods.
+// RunProgress waits for the mutation's result even if its renderer is interrupted.
 func RunProgress(message string, action func() error, renderSuccess func() string) error {
 	InitCommonStyles(os.Stdout)
 	return runProgress(message, os.Stdout, action, renderSuccess)
 }
 
 func runProgress(message string, out io.Writer, action func() error, renderSuccess func() string, options ...tea.ProgramOption) error {
-	if err := writeTranscript(out, LabelStyle().Bold(false).Render(message)); err != nil {
-		return fmt.Errorf("write progress transcript: %w", err)
-	}
-
 	task := newBackgroundTask(action)
-	model := newProgressModel(task)
+	model := newProgressModel(message, task)
 	programOptions := append([]tea.ProgramOption{tea.WithOutput(out)}, options...)
 
 	// The operation result is authoritative. If the renderer exits early, wait
 	// for the mutation so callers never report cancellation while it continues.
-	_, _ = runInlineProgram(model, programOptions...)
+	_, _ = tea.NewProgram(model, programOptions...).Run()
 	if err := task.wait(); err != nil {
 		return err
 	}
 
 	if renderSuccess != nil {
-		if err := writeTranscript(out, renderSuccess()); err != nil {
-			return fmt.Errorf("write progress result: %w", err)
+		if content := renderSuccess(); out != nil && content != "" {
+			if _, err := fmt.Fprintln(out, strings.TrimSuffix(content, "\n")); err != nil {
+				return fmt.Errorf("write progress result: %w", err)
+			}
 		}
 	}
 	return nil

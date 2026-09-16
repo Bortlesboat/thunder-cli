@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	"charm.land/bubbles/v2/spinner"
-	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -19,7 +19,6 @@ type BusyModel struct {
 	spin        spinner.Model
 	Quitting    bool
 	Interrupted bool
-	runtime     inlineRuntime
 	task        *backgroundTask
 
 	styles busyStyles
@@ -40,10 +39,9 @@ func newBusyStyles() busyStyles {
 func NewBusyModel(text string) BusyModel {
 	InitCommonStyles(os.Stdout)
 	return BusyModel{
-		text:    text,
-		spin:    NewPrimarySpinnerV2(),
-		runtime: newInlineRuntime(true),
-		styles:  newBusyStyles(),
+		text:   text,
+		spin:   NewPrimarySpinner(),
+		styles: newBusyStyles(),
 	}
 }
 
@@ -61,10 +59,7 @@ func (m BusyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case BusyDoneMsg:
 		m.Quitting = true
 		return m, tea.Quit
-	case tea.WindowSizeMsg:
-		m.runtime.update(msg)
-		return m, nil
-	case tea.KeyPressMsg:
+	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "Q", "esc", "ctrl+c":
 			m.Interrupted = true
@@ -79,13 +74,11 @@ func (m BusyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m BusyModel) View() tea.View {
-	return m.runtime.view(m.spin.View(), m.Quitting)
-}
-
-func (m BusyModel) transcript() string {
-	return m.styles.text.Render(m.text) + "\n" +
-		m.styles.help.Render("Esc/Q: Quit")
+func (m BusyModel) View() string {
+	if m.Quitting {
+		return ""
+	}
+	return m.spin.View() + " " + m.styles.text.Render(m.text) + "\n" + m.styles.help.Render("Esc/Q: Quit\n")
 }
 
 // RunWithBusySpinner shows a spinner while fn executes, then dismisses it.
@@ -103,10 +96,9 @@ func RunWithBusySpinner(message string, out io.Writer, fn func() error) error {
 	}
 
 	busy := NewBusyModel(message)
-	_ = writeTranscript(out, busy.transcript())
 	busy.task = newBackgroundTask(fn)
 
-	finalModel, runErr := runInlineProgram(busy, tea.WithOutput(out))
+	finalModel, runErr := tea.NewProgram(busy, tea.WithOutput(out), tea.WithoutSignalHandler()).Run()
 	if m, ok := finalModel.(BusyModel); ok && m.Interrupted {
 		return context.Canceled
 	}
