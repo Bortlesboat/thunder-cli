@@ -2,6 +2,10 @@ package utils
 
 import "strings"
 
+func ShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func Capitalize(s string) string {
 	if len(s) == 0 {
 		return s

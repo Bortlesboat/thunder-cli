@@ -121,7 +121,9 @@ func wrapTransferError(err error, upload bool) error {
 
 func rsyncTransfer(ctx context.Context, keyFile, ip string, port int, localPath, remotePath string, upload bool, stdout, stderr io.Writer) error {
 	remote := fmt.Sprintf("ubuntu@%s:%s", ip, remotePath)
-	sshCmd := fmt.Sprintf("ssh -i %s -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=30", keyFile, port)
+	// rsync parses -e itself and escapes embedded quotes by doubling them.
+	keyArg := "'" + strings.ReplaceAll(keyFile, "'", "''") + "'"
+	sshCmd := fmt.Sprintf("ssh -o IdentityAgent=none -o IdentitiesOnly=yes -i %s -p %d -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=30", keyArg, port)
 	args := []string{"-az", "--progress", "-e", sshCmd, localPath, remote}
 	if !upload {
 		args = []string{"-az", "--progress", "-e", sshCmd, remote, localPath}
@@ -134,9 +136,9 @@ func rsyncTransfer(ctx context.Context, keyFile, ip string, port int, localPath,
 
 func scpTransfer(ctx context.Context, keyFile, ip string, port int, localPath, remotePath string, upload bool, stdout, stderr io.Writer) error {
 	remote := fmt.Sprintf("ubuntu@%s:%s", ip, remotePath)
-	args := []string{"-i", keyFile, "-P", fmt.Sprintf("%d", port), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=30", "-r", localPath, remote}
+	args := []string{"-o", "IdentityAgent=none", "-o", "IdentitiesOnly=yes", "-i", keyFile, "-P", fmt.Sprintf("%d", port), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=30", "-r", localPath, remote}
 	if !upload {
-		args = []string{"-i", keyFile, "-P", fmt.Sprintf("%d", port), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=30", "-r", remote, localPath}
+		args[len(args)-2], args[len(args)-1] = remote, localPath
 	}
 	cmd := exec.CommandContext(ctx, "scp", args...)
 	cmd.Stdout = stdout

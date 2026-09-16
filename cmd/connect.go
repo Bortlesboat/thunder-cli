@@ -210,6 +210,9 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 	}
 
 	port := instance.Port
+	if JSONOutput && port <= 0 {
+		return usageErr("instance '%s' has no SSH port yet; retry when connection details are available", instanceID)
+	}
 	if port == 0 {
 		port = 22
 	}
@@ -382,7 +385,7 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 			KeyFile    string `json:"key_file"`
 			SSHCommand string `json:"ssh_command"`
 		}
-		sshCmd := fmt.Sprintf("ssh -i %s root@%s -p %d", keyFile, instance.GetIP(), port)
+		sshCmd := fmt.Sprintf("ssh -o IdentityAgent=none -o IdentitiesOnly=yes -i %s -p %d ubuntu@%s", utils.ShellQuote(keyFile), port, instance.GetIP())
 		printJSON(connectInfo{
 			InstanceID: instanceID,
 			UUID:       instance.UUID,
