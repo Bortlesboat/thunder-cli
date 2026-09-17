@@ -15,6 +15,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/getsentry/sentry-go"
 	"github.com/spf13/cobra"
 
 	"github.com/Thunder-Compute/thunder-cli/api"
@@ -383,6 +384,9 @@ func useManualLogin() bool {
 }
 
 func runInteractiveLogin() error {
+	sentry.ConfigureScope(func(scope *sentry.Scope) {
+		scope.SetTag("api_url", getAPIURL())
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	session := &loginSession{ctx: ctx}
