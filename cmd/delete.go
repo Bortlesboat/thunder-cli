@@ -64,7 +64,6 @@ func runDelete(args []string) error {
 		selectedInstance, err = tui.RunDeleteInteractive(client, instances)
 		if err != nil {
 			if errors.Is(err, tui.ErrCancelled) {
-				PrintWarningSimple("User cancelled delete process")
 				return nil
 			}
 			return err

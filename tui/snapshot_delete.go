@@ -111,8 +111,8 @@ func (m snapshotDeleteModel) handleEnter() (tea.Model, tea.Cmd) {
 			m.step = snapshotDeleteStepComplete
 			return m, tea.Quit
 		}
-		m.step = snapshotDeleteStepSelect
-		m.cursor = 0
+		m.quitting = true
+		return m, tea.Quit
 	}
 
 	return m, nil

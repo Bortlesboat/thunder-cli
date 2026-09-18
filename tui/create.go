@@ -554,7 +554,7 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Forward key messages to text inputs on disk steps
 		if m.step == stepDiskSize {
 			switch msg.String() {
-			case "q", "ctrl+c":
+			case "q", "Q", "ctrl+c":
 				m.quitting = true
 				return m, tea.Quit
 			case "esc":
