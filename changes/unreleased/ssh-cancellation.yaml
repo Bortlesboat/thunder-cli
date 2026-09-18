@@ -1,0 +1,3 @@
+kind: Fixed
+body: Close interrupted SSH sessions reliably and clear connection progress when cancelled. Interrupted file transfers now exit with code 130 and warn that destination files may be incomplete.
+time: 2026-09-17T12:00:00+10:00

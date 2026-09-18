@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/spf13/cobra"
@@ -138,7 +139,7 @@ func runSCP(sources []string, destination string) error {
 		keyFile = utils.GetKeyFile(target.UUID)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	transferOutput := os.Stdout
 	if JSONOutput {
@@ -180,11 +181,11 @@ func runSCP(sources []string, destination string) error {
 		err := utils.TransferWithOutput(ctx, keyFile, target.GetIP(), target.Port, localPath, remotePath, direction == "upload", transferOutput, os.Stderr)
 		if err != nil {
 			if errors.Is(err, utils.ErrTransferCancelled) {
-				if JSONOutput {
-					return err
+				message := "Transfer interrupted; destination files may be incomplete. Check them before retrying."
+				if !JSONOutput {
+					fmt.Fprintln(os.Stderr, message)
 				}
-				fmt.Println("\nTransfer cancelled")
-				return nil
+				return fmt.Errorf("%s: %w", message, context.Canceled)
 			}
 			if !isUserError(err) {
 				sentry.WithScope(func(scope *sentry.Scope) {

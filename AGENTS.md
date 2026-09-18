@@ -88,7 +88,7 @@ bump and generate the versioned notes and changelog. See
 
 Cancellation before submission is silent: clear loading indicators and menus without printing cancellation messages, errors, or usage. Status and snapshot monitoring preserve their final tables. Once a mutation is submitted, wait for and report its actual result; explain when work is still in progress instead of claiming it was cancelled. Retain actionable notices when an interruption leaves partial work or an uncertain outcome.
 
-Q/Esc menu cancellation exits with code 0; Ctrl+C in menus and SIGINT/SIGTERM delivered to the local process exit with code 130 before submission. Use `tui.NewProgram` and `tui.RunProgram` so signals follow the model's normal cleanup path. Submitted mutations use `RunProgress`, retain signal handling until completion, and return the operation's actual result.
+Q/Esc menu cancellation exits with code 0; Ctrl+C in menus and SIGINT/SIGTERM delivered to the local process exit with code 130 before submission or during an SSH session or transfer. Once an SSH shell is active, typed Ctrl+C, Q, and Esc are remote input; typed Ctrl+C should leave the SSH connection usable. Use `tui.NewProgram` and `tui.RunProgram` so signals follow the model's normal cleanup path. Submitted mutations use `RunProgress`, retain signal handling until completion, and return the operation's actual result.
 
 ## Development
 
