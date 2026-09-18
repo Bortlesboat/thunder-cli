@@ -5,6 +5,38 @@ change-fragment process was adopted remain available on the
 [GitHub releases page](https://github.com/Thunder-Compute/thunder-cli/releases).
 
 
+## v2.1.0 - 2026-09-16
+
+### Added
+- Sign in with OAuth through your browser using tnr login, with automatic credential refresh for continued CLI access.
+
+### Fixed
+- Keep saved credentials and avoid opening browser login when validation fails because of a temporary API, network, or OAuth provider error.
+- Start a new browser login when a saved CLI refresh token has expired, was already used, or no longer exists.
+- Prevent background subscription checks from interrupting browser-authenticated CLI sessions during token refresh.
+- Prevent login from reporting success when an invalid TNR_API_TOKEN would continue overriding newly saved credentials.
+- Allow login to recover after CLI access is revoked in Connected Apps.
+- Prevent simultaneous browser and manual login completions from mixing credential sources.
+- Clarify how to clear local credentials and check member-wide CLI access when logout revocation cannot authenticate.
+- Preserve refreshed browser login credentials when a command times out or is cancelled during token renewal.
+- Keep background subscription checks on the trusted API and allow login to replace invalid saved credentials, including with --token --json.
+- Show how to sign in again or replace a rejected API token when a command fails authentication, including guidance for TNR_API_TOKEN overrides.
+- Use the selected API environment's console token page for manual and headless login.
+- Prevent file transfers from hanging on an unrelated SSH agent by using only the saved instance key.
+
+### Security
+- Use dedicated OAuth credentials for browser login, rotate credentials automatically, and let logout securely revoke the current member's Thunder CLI access without signing out Console or affecting other organization members.
+- Stop copying the local CLI authentication credential onto instances during connect.
+- Prevent a running command from silently switching accounts when another CLI process logs out and signs in again.
+- Prevent project configuration and API URL overrides from sending browser login credentials to a different API origin.
+
+<!-- Internal changes -->
+<!-- Keep authentication tests focused on credential safety and remove redundant coverage. -->
+<!-- Add localhost and staging CLI runners with isolated credentials for rollout testing. -->
+<!-- Pin GoReleaser to v2.17.1 to preserve manual CLI releases without a version tag in the monorepo checkout. -->
+
+**Full Changelog**: https://github.com/Thunder-Compute/thunder-cli/compare/v2.0.72...v2.1.0
+
 ## v2.0.72 - 2026-09-15
 
 ### Added

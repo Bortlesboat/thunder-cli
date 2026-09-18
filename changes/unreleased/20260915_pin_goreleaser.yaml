@@ -1,3 +1,0 @@
-kind: Internal
-body: Pin GoReleaser to v2.17.1 to preserve manual CLI releases without a version tag in the monorepo checkout.
-time: 2026-09-15T20:00:00+10:00

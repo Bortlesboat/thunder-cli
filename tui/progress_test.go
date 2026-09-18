@@ -9,35 +9,10 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestInlineRuntimeWrapsANSITextToTerminalWidth(t *testing.T) {
-	runtime := newInlineRuntime(true)
-	runtime.update(tea.WindowSizeMsg{Width: 12, Height: 5})
-
-	wrapped := runtime.wrap("\x1b[1mA styled message that must remain complete\x1b[0m")
-	for _, line := range strings.Split(wrapped, "\n") {
-		assert.LessOrEqual(t, ansi.StringWidth(line), 12)
-	}
-	assert.Equal(t, "A styled message that must remain complete", strings.Join(strings.Fields(stripANSI(wrapped)), " "))
-}
-
-func TestInlineRuntimeViewOwnsAtMostOneCellAcrossResizes(t *testing.T) {
-	runtime := newInlineRuntime(true)
-
-	for _, width := range []int{80, 1, 20, 0, 120} {
-		runtime.update(tea.WindowSizeMsg{Width: width, Height: 24})
-		view := runtime.view("\x1b[1m⠋\x1b[0m message\nsecond line", false)
-
-		assert.False(t, view.AltScreen)
-		assert.NotContains(t, view.Content, "\n")
-		assert.LessOrEqual(t, ansi.StringWidth(view.Content), 1)
-	}
-}
 
 func TestBusyModelCancellationIsImmediateForReadOnlyWork(t *testing.T) {
 	release := make(chan struct{})
@@ -49,7 +24,7 @@ func TestBusyModelCancellationIsImmediateForReadOnlyWork(t *testing.T) {
 
 	model := NewBusyModel("Fetching instances...")
 	model.task = task
-	updated, cmd := model.Update(tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	result := updated.(BusyModel)
 
 	assert.True(t, result.Interrupted)
@@ -62,12 +37,15 @@ func TestBusyModelCancellationIsImmediateForReadOnlyWork(t *testing.T) {
 	}
 }
 
-func TestBusyModelTranscriptShowsCancellationHint(t *testing.T) {
+func TestBusyModelDismissesMessageAndCancellationHint(t *testing.T) {
 	model := NewBusyModel("Fetching instances...")
-	transcript := stripANSI(model.transcript())
+	view := stripANSI(model.View())
 
-	assert.Contains(t, transcript, "Fetching instances...")
-	assert.Contains(t, transcript, "Esc/Q: Quit")
+	assert.Contains(t, view, "Fetching instances...")
+	assert.Contains(t, view, "Esc/Q: Quit")
+
+	updated, _ := model.Update(BusyDoneMsg{})
+	assert.Empty(t, updated.(BusyModel).View())
 }
 
 func TestProgressModelDoesNotAbandonMutationOnCancellationKey(t *testing.T) {
@@ -78,13 +56,15 @@ func TestProgressModelDoesNotAbandonMutationOnCancellationKey(t *testing.T) {
 	})
 	defer close(release)
 
-	model := newProgressModel(task)
-	updated, cmd := model.Update(tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
+	model := newProgressModel("Creating instance...", task)
+	assert.Contains(t, stripANSI(model.View()), "Creating instance...")
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	result := updated.(progressModel)
 
 	assert.True(t, result.cancellationRequested)
 	assert.False(t, result.done)
-	require.NotNil(t, cmd)
+	assert.Nil(t, cmd)
+	assert.Contains(t, stripANSI(result.View()), "waiting for it to finish")
 	select {
 	case <-task.done:
 		t.Fatal("mutation unexpectedly stopped when cancellation was requested")
@@ -92,7 +72,7 @@ func TestProgressModelDoesNotAbandonMutationOnCancellationKey(t *testing.T) {
 	}
 }
 
-func TestRunProgressOwnsProgramAndPrintsTranscript(t *testing.T) {
+func TestRunProgressPrintsSuccess(t *testing.T) {
 	var out bytes.Buffer
 
 	err := runProgress(
@@ -101,12 +81,11 @@ func TestRunProgressOwnsProgramAndPrintsTranscript(t *testing.T) {
 		func() error { return nil },
 		func() string { return "Instance created" },
 		tea.WithInput(nil),
-		tea.WithoutSignals(),
+		tea.WithoutSignalHandler(),
 	)
 
 	require.NoError(t, err)
-	assert.Contains(t, stripANSI(out.String()), "Creating instance...")
-	assert.Contains(t, stripANSI(out.String()), "Instance created")
+	assert.Equal(t, 1, strings.Count(stripANSI(out.String()), "Instance created"))
 }
 
 func TestRunProgressWaitsForMutationAfterRendererStops(t *testing.T) {
@@ -155,7 +134,7 @@ func TestRunProgressReturnsMutationError(t *testing.T) {
 		func() error { return want },
 		nil,
 		tea.WithInput(nil),
-		tea.WithoutSignals(),
+		tea.WithoutSignalHandler(),
 	)
 
 	assert.ErrorIs(t, err, want)

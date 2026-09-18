@@ -1,3 +1,0 @@
-kind: Fixed
-body: Keep saved credentials and avoid opening browser login when validation fails because of a temporary API, network, or OAuth provider error.
-time: 2026-09-04T00:00:00+10:00

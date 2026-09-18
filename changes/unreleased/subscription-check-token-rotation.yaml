@@ -1,3 +1,0 @@
-kind: Fixed
-body: Prevent background subscription checks from interrupting browser-authenticated CLI sessions during token refresh.
-time: 2026-09-04T11:16:02+10:00

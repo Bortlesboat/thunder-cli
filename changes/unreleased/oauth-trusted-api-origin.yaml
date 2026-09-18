@@ -1,3 +1,0 @@
-kind: Security
-body: Prevent project configuration and API URL overrides from sending browser login credentials to a different API origin.
-time: 2026-09-07T12:00:00+10:00
