@@ -231,8 +231,8 @@ func (m snapshotDeleteModel) View() string {
 func RunSnapshotDeleteInteractive(client *api.Client, snapshots api.ListSnapshotsResponse) (*api.Snapshot, error) {
 	InitCommonStyles(os.Stdout)
 	m := NewSnapshotDeleteModel(client, snapshots)
-	p := tea.NewProgram(m)
-	finalModel, err := p.Run()
+	p := NewProgram(m)
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return nil, fmt.Errorf("error running TUI: %w", err)
 	}

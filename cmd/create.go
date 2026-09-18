@@ -181,7 +181,6 @@ func runCreate(cmd *cobra.Command) error {
 		createConfig, err = tui.RunCreateInteractive(client, specs)
 		if err != nil {
 			if errors.Is(err, tui.ErrCancelled) {
-				PrintWarningSimple("User cancelled creation process")
 				return nil
 			}
 			return err
@@ -223,7 +222,6 @@ func runCreate(cmd *cobra.Command) error {
 			createConfig, err = tui.RunCreateHybrid(client, specs, presets)
 			if err != nil {
 				if errors.Is(err, tui.ErrCancelled) {
-					PrintWarningSimple("User cancelled creation process")
 					return nil
 				}
 				return err
@@ -245,7 +243,6 @@ func runCreate(cmd *cobra.Command) error {
 		createConfig, err = tui.RunCreateHybrid(client, specs, presets)
 		if err != nil {
 			if errors.Is(err, tui.ErrCancelled) {
-				PrintWarningSimple("User cancelled creation process")
 				return nil
 			}
 			return err

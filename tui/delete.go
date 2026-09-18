@@ -248,8 +248,8 @@ func (m deleteModel) View() string {
 func RunDeleteInteractive(client *api.Client, instances []api.Instance) (*api.Instance, error) {
 	InitCommonStyles(os.Stdout)
 	m := NewDeleteModel(client, instances)
-	p := tea.NewProgram(m)
-	finalModel, err := p.Run()
+	p := NewProgram(m)
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return nil, fmt.Errorf("error running TUI: %w", err)
 	}

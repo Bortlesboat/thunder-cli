@@ -1,10 +1,8 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -201,11 +199,6 @@ func (m connectModel) View() string {
 		b.WriteString(successStyle.Render(fmt.Sprintf("✓ Selected: %s", m.selected)))
 		b.WriteString("\n")
 	}
-	if m.cancelled {
-		b.WriteString("\n")
-		b.WriteString(warningStyleTUI.Render("⚠ Cancelled"))
-		b.WriteString("\n")
-	}
 
 	b.WriteString("\n")
 	if m.done || m.cancelled {
@@ -218,19 +211,15 @@ func (m connectModel) View() string {
 }
 
 func RunConnect(instances []string) (string, error) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	InitCommonStyles(os.Stdout)
 
 	m := newConnectModel(instances)
-	p := tea.NewProgram(
+	p := NewProgram(
 		m,
-		tea.WithContext(ctx),
 		tea.WithOutput(os.Stdout),
 	)
 
-	finalModel, err := p.Run()
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return "", fmt.Errorf("error running connect TUI: %w", err)
 	}
@@ -247,19 +236,15 @@ func RunConnect(instances []string) (string, error) {
 }
 
 func RunConnectInteractiveSelect(client *api.Client) (string, error) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	InitCommonStyles(os.Stdout)
 
 	m := newConnectFetchModel(client)
-	p := tea.NewProgram(
+	p := NewProgram(
 		m,
-		tea.WithContext(ctx),
 		tea.WithOutput(os.Stdout),
 	)
 
-	finalModel, err := p.Run()
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return "", fmt.Errorf("error running connect TUI: %w", err)
 	}
@@ -290,9 +275,6 @@ func RunConnectInteractiveSelect(client *api.Client) (string, error) {
 }
 
 func RunConnectSelectWithInstances(instances []api.Instance) (string, error) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	InitCommonStyles(os.Stdout)
 
 	var items []string
@@ -312,13 +294,12 @@ func RunConnectSelectWithInstances(instances []api.Instance) (string, error) {
 	m := newConnectModel(items)
 	m.displayToID = displayToID
 
-	p := tea.NewProgram(
+	p := NewProgram(
 		m,
-		tea.WithContext(ctx),
 		tea.WithOutput(os.Stdout),
 	)
 
-	finalModel, err := p.Run()
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return "", fmt.Errorf("error running connect TUI: %w", err)
 	}

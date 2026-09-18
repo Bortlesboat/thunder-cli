@@ -86,7 +86,19 @@ func runProgress(message string, out io.Writer, action func() error, renderSucce
 
 	// The operation result is authoritative. If the renderer exits early, wait
 	// for the mutation so callers never report cancellation while it continues.
-	_, _ = tea.NewProgram(model, programOptions...).Run()
+	p := NewProgram(model, programOptions...)
+	stop := p.listenSignals()
+	defer stop()
+	_, runErr := p.Run()
+	if runErr != nil {
+		select {
+		case <-task.done:
+		default:
+			if out != nil {
+				fmt.Fprintln(out, "Operation is already in progress; waiting for it to finish.")
+			}
+		}
+	}
 	if err := task.wait(); err != nil {
 		return err
 	}

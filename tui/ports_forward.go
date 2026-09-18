@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,8 +20,6 @@ const (
 	portsForwardStepSelectInstance portsForwardStep = iota
 	portsForwardStepEditPorts
 	portsForwardStepConfirmation
-	portsForwardStepApplying
-	portsForwardStepComplete
 )
 
 type portsForwardModel struct {
@@ -35,11 +32,10 @@ type portsForwardModel struct {
 	currentPorts     []int
 	addPorts         []int
 	removePorts      []int
-	err              error
 	validationErr    error
 	quitting         bool
 	cancelled        bool
-	spinner          spinner.Model
+	confirmed        bool
 	resp             *api.PortAddResponse
 
 	styles PanelStyles
@@ -55,15 +51,12 @@ func NewPortsForwardModel(client *api.Client, instances []api.Instance) tea.Mode
 	ti.Width = 40
 	ti.Prompt = "▶ "
 
-	s := NewPrimarySpinner()
-
 	return portsForwardModel{
 		step:      portsForwardStepSelectInstance,
 		cursor:    0,
 		instances: instances,
 		client:    client,
 		portInput: ti,
-		spinner:   s,
 		styles:    styles,
 	}
 }
@@ -82,7 +75,7 @@ func (m portsForwardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "q", "Q":
-			if m.step != portsForwardStepEditPorts && m.step != portsForwardStepApplying {
+			if m.step != portsForwardStepEditPorts {
 				m.cancelled = true
 				m.quitting = true
 				return m, tea.Quit
@@ -138,20 +131,6 @@ func (m portsForwardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.portInput, cmd = m.portInput.Update(msg)
 			return m, cmd
 		}
-
-	case portsForwardApiResultMsg:
-		m.step = portsForwardStepComplete
-		m.err = msg.err
-		m.resp = msg.resp
-		m.quitting = true
-		return m, tea.Quit
-
-	default:
-		if m.step == portsForwardStepApplying {
-			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
-			return m, cmd
-		}
 	}
 
 	return m, nil
@@ -196,11 +175,9 @@ func (m portsForwardModel) handleEnter() (tea.Model, tea.Cmd) {
 
 	case portsForwardStepConfirmation:
 		if m.cursor == 0 { // Apply Changes
-			m.step = portsForwardStepApplying
-			return m, tea.Batch(
-				m.spinner.Tick,
-				portsForwardApiCmd(m.client, m.selectedInstance.ID, m.addPorts, m.removePorts),
-			)
+			m.confirmed = true
+			m.quitting = true
+			return m, tea.Quit
 		}
 		// Cancel
 		m.cancelled = true
@@ -239,24 +216,8 @@ func calculatePortChanges(current, desired []int) (add, remove []int) {
 	return add, remove
 }
 
-type portsForwardApiResultMsg struct {
-	resp *api.PortAddResponse
-	err  error
-}
-
-// portsForwardApiCmd applies the desired-port diff in one API transaction.
-func portsForwardApiCmd(client *api.Client, instanceID string, addPorts, removePorts []int) tea.Cmd {
-	return func() tea.Msg {
-		resp, err := client.UpdatePorts(instanceID, addPorts, removePorts)
-		if err != nil {
-			return portsForwardApiResultMsg{err: err}
-		}
-		return portsForwardApiResultMsg{resp: resp}
-	}
-}
-
 func (m portsForwardModel) View() string {
-	if m.quitting && m.step != portsForwardStepComplete {
+	if m.quitting {
 		return ""
 	}
 
@@ -269,10 +230,6 @@ func (m portsForwardModel) View() string {
 		s.WriteString(m.renderEditPortsStep())
 	case portsForwardStepConfirmation:
 		s.WriteString(m.renderConfirmationStep())
-	case portsForwardStepApplying:
-		s.WriteString(fmt.Sprintf("\n   %s Updating ports...\n\n", m.spinner.View()))
-	case portsForwardStepComplete:
-		s.WriteString(m.renderCompleteStep())
 	}
 
 	return s.String()
@@ -395,10 +352,6 @@ func (m portsForwardModel) renderConfirmationStep() string {
 }
 
 func (m portsForwardModel) renderCompleteStep() string {
-	if m.err != nil {
-		return errorStyleTUI.Render(fmt.Sprintf("\n✗ Failed to update ports: %v\n\n", m.err))
-	}
-
 	headerStyle := theme.Label()
 	labelStyle := theme.Neutral()
 	valueStyle := lipgloss.NewStyle().Bold(true)
@@ -450,9 +403,9 @@ func (m portsForwardModel) renderCompleteStep() string {
 // RunPortsForwardInteractive starts the interactive port forwarding flow
 func RunPortsForwardInteractive(client *api.Client, instances []api.Instance) error {
 	m := NewPortsForwardModel(client, instances)
-	p := tea.NewProgram(m)
+	p := NewProgram(m)
 
-	finalModel, err := p.Run()
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return fmt.Errorf("error running interactive port forward: %w", err)
 	}
@@ -462,13 +415,13 @@ func RunPortsForwardInteractive(client *api.Client, instances []api.Instance) er
 		return fmt.Errorf("unexpected model type")
 	}
 
-	if finalPortsModel.cancelled {
+	if finalPortsModel.cancelled || !finalPortsModel.confirmed {
 		return ErrCancelled
 	}
 
-	if finalPortsModel.err != nil {
-		return finalPortsModel.err
-	}
-
-	return nil
+	return RunProgress("Updating ports...", func() error {
+		var err error
+		finalPortsModel.resp, err = finalPortsModel.client.UpdatePorts(finalPortsModel.selectedInstance.ID, finalPortsModel.addPorts, finalPortsModel.removePorts)
+		return err
+	}, func() string { return finalPortsModel.renderCompleteStep() })
 }

@@ -257,19 +257,19 @@ func (m LoginModel) Error() error {
 	return m.err
 }
 
-func SendLoginSuccess(p *tea.Program, completion LoginCompletion) {
+func SendLoginSuccess(p *Program, completion LoginCompletion) {
 	if p != nil {
 		p.Send(loginSuccessMsg{LoginCompletion: completion})
 	}
 }
 
-func SendLoginError(p *tea.Program, err error) {
+func SendLoginError(p *Program, err error) {
 	if p != nil {
 		p.Send(loginErrorMsg{Err: err})
 	}
 }
 
-func SendLoginCancel(p *tea.Program) {
+func SendLoginCancel(p *Program) {
 	if p != nil {
 		p.Send(loginCancelMsg{})
 	}

@@ -117,18 +117,28 @@ func Execute() int {
 		}
 	}()
 
+	// Classify cancellation before Cobra's automatic usage output.
+	silenceUsage := rootCmd.SilenceUsage
+	rootCmd.SilenceUsage = true
 	c, err := rootCmd.ExecuteC()
+	rootCmd.SilenceUsage = silenceUsage
 	if err != nil {
 		// pflag may overwrite a pre-detected true value while rejecting an
 		// invalid --json value. Error rendering still needs to honor the user's
 		// request for structured output.
 		JSONOutput = requestedJSON
 		tui.SetNonInteractive(JSONOutput)
+		if errors.Is(err, tui.ErrCancelled) {
+			return 0
+		}
 		if errors.Is(err, context.Canceled) {
 			if JSONOutput {
 				PrintError(err)
 			}
 			return 130
+		}
+		if !silenceUsage && c != nil && !c.SilenceUsage && c.CalledAs() != "" {
+			rootCmd.Println(c.UsageString())
 		}
 		if !isUserError(err) {
 			sentry.WithScope(func(scope *sentry.Scope) {

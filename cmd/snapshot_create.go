@@ -90,7 +90,6 @@ func runSnapshotCreate(cmd *cobra.Command) error {
 		createConfig, err := tui.RunSnapshotCreateInteractive(client)
 		if err != nil {
 			if errors.Is(err, tui.ErrCancelled) {
-				PrintWarningSimple("User cancelled snapshot creation")
 				return nil
 			}
 			if errors.Is(err, tui.ErrNoRunningInstances) {

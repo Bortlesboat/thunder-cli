@@ -99,7 +99,6 @@ func runModify(cmd *cobra.Command, args []string) error {
 		selectedInstance, err = tui.RunModifyInstanceSelector(client, instances)
 		if err != nil {
 			if errors.Is(err, tui.ErrCancelled) {
-				PrintWarningSimple("User cancelled modification process")
 				return nil
 			}
 			return err
@@ -143,7 +142,6 @@ func runModify(cmd *cobra.Command, args []string) error {
 		modifyConfig, err = tui.RunModifyInteractive(client, selectedInstance, specs)
 		if err != nil {
 			if errors.Is(err, tui.ErrCancelled) {
-				PrintWarningSimple("User cancelled modification process")
 				return nil
 			}
 			if errors.Is(err, tui.ErrNoChanges) {
@@ -168,7 +166,6 @@ func runModify(cmd *cobra.Command, args []string) error {
 			modifyConfig, err = tui.RunModifyHybrid(client, selectedInstance, specs, modifyPresets)
 			if err != nil {
 				if errors.Is(err, tui.ErrCancelled) {
-					PrintWarningSimple("User cancelled modification process")
 					return nil
 				}
 				if errors.Is(err, tui.ErrNoChanges) {
@@ -187,7 +184,6 @@ func runModify(cmd *cobra.Command, args []string) error {
 		modifyConfig, err = tui.RunModifyHybrid(client, selectedInstance, specs, modifyPresets)
 		if err != nil {
 			if errors.Is(err, tui.ErrCancelled) {
-				PrintWarningSimple("User cancelled modification process")
 				return nil
 			}
 			if errors.Is(err, tui.ErrNoChanges) {

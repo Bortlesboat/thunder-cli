@@ -1179,8 +1179,8 @@ func (m createModel) computePreviewPrice() float64 {
 }
 
 func runCreateModel(m createModel) (*CreateConfig, error) {
-	p := tea.NewProgram(m)
-	finalModel, err := p.Run()
+	p := NewProgram(m)
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return nil, fmt.Errorf("error running TUI: %w", err)
 	}
