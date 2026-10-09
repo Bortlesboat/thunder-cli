@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -266,4 +268,30 @@ func TestListInstancesRateLimitIncludesRetryAfterHTTPDate(t *testing.T) {
 	assert.True(t, apiErr.HasRetryAfter)
 	assert.GreaterOrEqual(t, apiErr.RetryAfter, time.Duration(0))
 	assert.LessOrEqual(t, apiErr.RetryAfter, 3*time.Second)
+}
+
+func TestReportDoesNotRetryUnknownWritesOrFollowRedirects(t *testing.T) {
+	for _, mode := range []string{"lost response", "redirect"} {
+		t.Run(mode, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if mode == "redirect" {
+					w.Header().Set("Location", "/redirected")
+					w.WriteHeader(http.StatusTemporaryRedirect)
+					return
+				}
+				connection, _, err := w.(http.Hijacker).Hijack()
+				require.NoError(t, err)
+				require.NoError(t, connection.Close())
+			}))
+			defer server.Close()
+			client := NewClient("token", server.URL)
+			_, err := client.SubmitReport(context.Background(), ReportRequest{Subject: "Report", Details: "Evidence", Source: "cli", ReportKind: "bug", Category: "technical_issue"})
+			var apiErr *APIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, "support_submission_unknown", apiErr.Code)
+			assert.Equal(t, int32(1), requests.Load())
+		})
+	}
 }

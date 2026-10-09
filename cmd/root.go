@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/Thunder-Compute/thunder-cli/internal/clierr"
+	"github.com/Thunder-Compute/thunder-cli/internal/outputmode"
 	"github.com/Thunder-Compute/thunder-cli/internal/tty"
 
 	"github.com/Thunder-Compute/thunder-cli/api"
@@ -69,27 +69,7 @@ func printVersion(cmd *cobra.Command) {
 // --json values are treated as a request for JSON, allowing the validation
 // error itself to be returned as JSON.
 func detectJSONOutput(args []string) bool {
-	requested := false
-	for _, arg := range args {
-		if arg == "--" {
-			break
-		}
-		if arg == "--json" {
-			requested = true
-			continue
-		}
-		if !strings.HasPrefix(arg, "--json=") {
-			continue
-		}
-		value := strings.TrimPrefix(arg, "--json=")
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			requested = true
-			continue
-		}
-		requested = parsed
-	}
-	return requested
+	return outputmode.JSONRequested(args)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -631,7 +611,7 @@ func shouldSkipSubscriptionCheck(cmd *cobra.Command) bool {
 	}
 	for current := cmd; current != nil; current = current.Parent() {
 		switch current.Name() {
-		case "help", "completion", "version", "login", "logout":
+		case "help", "completion", "version", "login", "logout", "report":
 			return true
 		}
 	}

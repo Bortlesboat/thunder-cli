@@ -77,7 +77,7 @@ func RenderRootHelp(cmd *cobra.Command) {
 	sections := []section{
 		{"CORE", []string{"create", "status", "connect", "modify", "delete"}},
 		{"UTILS", []string{"scp", "ports", "snapshot"}},
-		{"SETTINGS", []string{"login", "logout", "update"}},
+		{"SETTINGS", []string{"login", "logout", "update", "report"}},
 	}
 
 	output.WriteString(SectionStyle.Render("● COMMANDS"))

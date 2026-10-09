@@ -117,3 +117,19 @@ Browser login requires the staging API's `/v1/auth/cli/oauth-config` endpoint an
 # License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+## Bug reports and feedback
+
+Run `tnr report` to enter a subject and details, review the included context, and confirm submission to Thunder support. Reports default to bugs; use `--kind feedback` for product feedback. In the details editor, press Ctrl+D to review. Cancel with Esc or Ctrl+C; cancellation sends nothing and exits with code 130.
+
+```sh
+tnr report --subject "Upload connection drops" --details-file ./report.txt --component cli --instance 42
+tnr report --kind feedback --subject "Show remaining disk space" --details "Please show disk usage in the instance list." --yes --json
+tnr report --subject "Unexpected result" --details-file - --dry-run --json < ./report.txt
+```
+
+Noninteractive submission requires `--subject`, `--details` or `--details-file`, and `--yes`. `--json` never prompts. `--details-file -` reads standard input. `--details` and `--details-file` are mutually exclusive. Subject and details limits are 200 and 10,000 Unicode characters; oversized text is rejected instead of truncated. `--dry-run` previews without authentication or submission and identifies the missing server-resolved requester.
+
+Optional context flags are `--component` (`cli`, `console`, `api`, `mcp`, `virtualization`, or `unknown`), either `--instance` or `--sandbox`, and `--occurred-at` (RFC 3339). The report includes the CLI version, build commit and date, OS, and architecture. The server records submission time and resolves the requester from your login or verified API token owner. No logs, environment variables, shell history, or workload files are collected automatically. Only include evidence you intend to share with support, and omit credentials.
+
+Confirmed submissions print an opaque report reference. Exit zero means confirmed receipt or a successful dry run. Rejections, rate limits, and unconfirmed outcomes exit nonzero and retain the entered report in the error output. JSON errors include `error`, `message`, `report_id` when available, and `report`. If `support_submission_unknown` is returned, the report may already have arrived: keep the reference and do not automatically resend. Reporting skips automatic update and subscription checks.
