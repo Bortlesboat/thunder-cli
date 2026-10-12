@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 )
@@ -71,6 +72,14 @@ func (c *Client) submitReportWithToken(ctx context.Context, body []byte, token s
 	resp, err := c.sendRequestWithToken(ctx, http.MethodPost, supportReportPath, body, token, &httpClient)
 	if err != nil {
 		if errors.Is(err, ErrTransport) {
+			var dnsErr *net.DNSError
+			var opErr *net.OpError
+			if errors.As(err, &dnsErr) || errors.As(err, &opErr) && opErr.Op == "dial" {
+				return nil, &APIError{
+					Code:    "support_submission_failed",
+					Message: "Could not connect to Thunder support. Your report was not sent. Keep your input and try again.",
+				}
+			}
 			return nil, unknownReportError("")
 		}
 		return nil, err

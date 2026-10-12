@@ -47,13 +47,27 @@ func newReportCommand() *cobra.Command {
 func init() { rootCmd.AddCommand(reportCmd) }
 
 func runReport(cmd *cobra.Command, _ []string) error {
-	get := func(name string) string { value, _ := cmd.Flags().GetString(name); return value }
+	get := func(name string) string {
+		value, _ := cmd.Flags().GetString(name)
+		return value
+	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	input := api.ReportRequest{
-		Subject: get("subject"), Details: get("details"), ReportKind: get("kind"), Source: "cli",
+		Subject:    get("subject"),
+		Details:    get("details"),
+		ReportKind: get("kind"),
+		Source:     "cli",
 		Context: api.ReportContext{
-			SuspectedComponent: get("component"), OccurredAt: get("occurred-at"), InstanceID: get("instance"), SandboxID: get("sandbox"),
-			PreparedAt: time.Now().UTC().Format(time.RFC3339Nano), CLIVersion: version.BuildVersion, BuildCommit: version.BuildCommit, BuildDate: version.BuildDate, OS: runtime.GOOS, Architecture: runtime.GOARCH,
+			SuspectedComponent: get("component"),
+			OccurredAt:         get("occurred-at"),
+			InstanceID:         get("instance"),
+			SandboxID:          get("sandbox"),
+			PreparedAt:         time.Now().UTC().Format(time.RFC3339Nano),
+			CLIVersion:         version.BuildVersion,
+			BuildCommit:        version.BuildCommit,
+			BuildDate:          version.BuildDate,
+			OS:                 runtime.GOOS,
+			Architecture:       runtime.GOARCH,
 		},
 	}
 	if cmd.Flags().Changed("details") && cmd.Flags().Changed("details-file") {
@@ -92,7 +106,12 @@ func runReport(cmd *cobra.Command, _ []string) error {
 	if err := validateReportInput(&input); err != nil {
 		return err
 	}
-	preview := reportPreview{DryRun: dryRun, Submitted: false, Requester: "Resolved by the server after authentication; absent from this preview.", Report: input}
+	preview := reportPreview{
+		DryRun:    dryRun,
+		Submitted: false,
+		Requester: "Resolved by the server after authentication; absent from this preview.",
+		Report:    input,
+	}
 	if dryRun {
 		if JSONOutput {
 			printJSON(preview)

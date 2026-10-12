@@ -1,3 +1,3 @@
 kind: Added
-body: Report bugs and share product feedback with tnr report, including file or stdin input, previews, and JSON output.
+body: Report bugs and share product feedback with tnr report, including file or stdin input, previews, JSON output, bounded interactive input, and clear unsent versus uncertain submission outcomes.
 time: 2026-10-09T12:00:00+11:00

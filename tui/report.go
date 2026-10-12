@@ -71,10 +71,11 @@ func (m reportInputModel) View() string {
 
 func RunReportInput(subject, details string) (string, string, error) {
 	title := textinput.New()
+	title.CharLimit = 200
 	title.SetValue(subject)
 	title.Width = 70
 	body := textarea.New()
-	body.CharLimit = 0
+	body.CharLimit = 10000
 	body.SetValue(details)
 	body.SetWidth(76)
 	body.SetHeight(8)
