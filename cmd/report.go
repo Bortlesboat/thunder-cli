@@ -15,6 +15,7 @@ import (
 	"github.com/Thunder-Compute/thunder-cli/api"
 	"github.com/Thunder-Compute/thunder-cli/internal/version"
 	"github.com/Thunder-Compute/thunder-cli/tui"
+	helpmenus "github.com/Thunder-Compute/thunder-cli/tui/help-menus"
 	termx "github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 )
@@ -26,7 +27,7 @@ func newReportCommand() *cobra.Command {
 		Use:          "report",
 		Short:        "Report a bug or share product feedback",
 		SilenceUsage: true,
-		Long:         "Send a bug report or product feedback to Thunder support. Only your supplied text and the displayed context are included.\nUse --details-file - to read standard input. Dry run requires no login.",
+		Long:         "Send a bug report or product feedback to Thunder support. In a terminal, tnr report asks for the report type, a summary and details, then shows the report for review before sending. Flags fill in their steps. Only your supplied text and the displayed context are included.\nUse --details-file - to read standard input. Dry run requires no login.",
 		Args:         wrapArgs(cobra.NoArgs),
 		Annotations:  map[string]string{"skipUpdateCheck": "true"},
 		RunE:         runReport,
@@ -40,7 +41,7 @@ func newReportCommand() *cobra.Command {
 	cmd.Flags().String("sandbox", "", "Sandbox identifier (mutually exclusive with --instance)")
 	cmd.Flags().String("occurred-at", "", "Occurrence time in RFC 3339 format")
 	cmd.Flags().Bool("dry-run", false, "Preview the report without submitting or authenticating")
-	cmd.SetHelpFunc(wrapHelp(func(c *cobra.Command) { printDefaultHelp(c) }))
+	cmd.SetHelpFunc(wrapHelp(helpmenus.RenderReportHelp))
 	return cmd
 }
 
@@ -96,14 +97,35 @@ func runReport(cmd *cobra.Command, _ []string) error {
 		input.Details = string(data)
 	}
 	interactive := tui.IsInteractive() && termx.IsTerminal(os.Stdin.Fd()) && !JSONOutput
-	if interactive && (strings.TrimSpace(input.Subject) == "" || strings.TrimSpace(input.Details) == "") {
-		subject, details, err := tui.RunReportInput(input.Subject, input.Details)
+	if err := validateReportInput(&input, interactive); err != nil {
+		return err
+	}
+	var client *api.Client
+	if !dryRun {
+		var err error
+		client, err = getAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+	}
+	confirm := interactive && !dryRun && !YesFlag
+	if interactive && (input.Subject == "" || input.Details == "" || confirm) {
+		preset := tui.ReportInput{Subject: input.Subject, Details: input.Details}
+		if cmd.Flags().Changed("kind") {
+			preset.Kind = input.ReportKind
+		}
+		report, err := tui.RunReport(preset, []tui.ReportField{
+			{Label: "Component", Value: input.Context.SuspectedComponent},
+			{Label: "Instance", Value: input.Context.InstanceID},
+			{Label: "Sandbox", Value: input.Context.SandboxID},
+			{Label: "Occurred at", Value: input.Context.OccurredAt},
+		}, confirm)
 		if err != nil {
 			return reportCancellation(err)
 		}
-		input.Subject, input.Details = subject, details
+		input.ReportKind, input.Subject, input.Details = report.Kind, report.Subject, report.Details
 	}
-	if err := validateReportInput(&input); err != nil {
+	if err := validateReportInput(&input, false); err != nil {
 		return err
 	}
 	preview := reportPreview{
@@ -120,38 +142,21 @@ func runReport(cmd *cobra.Command, _ []string) error {
 		}
 		return nil
 	}
+	if !YesFlag && !interactive {
+		return usageErr("provide --subject and --details or --details-file, and use --yes to submit noninteractively; use --dry-run to preview")
+	}
 	if interactive && YesFlag {
 		renderReportPreview(cmd.OutOrStdout(), preview)
 	}
-	if !YesFlag {
-		if !interactive {
-			return usageErr("provide --subject and --details or --details-file, and use --yes to submit noninteractively; use --dry-run to preview")
-		}
-		renderReportPreview(cmd.OutOrStdout(), preview)
-		confirmed, err := tui.ConfirmReport()
-		if err != nil {
-			return reportCancellation(err)
-		}
-		if !confirmed {
-			return context.Canceled
-		}
-	}
-	client, err := getAuthenticatedClient()
-	if err != nil {
-		return err
-	}
 	result, err := client.SubmitReport(cmd.Context(), input)
 	if err != nil {
-		var apiErr *api.APIError
-		if errors.As(err, &apiErr) {
-			return &reportSubmissionError{APIError: apiErr, Report: input}
-		}
-		return err
+		return &reportSubmissionError{Err: err, Report: input}
 	}
 	if JSONOutput {
 		printJSON(result)
 	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "Report submitted. Reference: %s\n", result.ReportID)
+		fmt.Fprintln(cmd.OutOrStdout(), tui.RenderSuccessSimple("Report submitted successfully!"))
+		fmt.Fprintf(cmd.OutOrStdout(), "Reference: %s\n", result.ReportID)
 	}
 	return nil
 }
@@ -176,35 +181,36 @@ func renderReportPreview(out io.Writer, preview reportPreview) {
 }
 
 type reportSubmissionError struct {
-	*api.APIError
+	Err    error
 	Report api.ReportRequest
 }
 
 func (e *reportSubmissionError) Error() string {
-	message := e.APIError.Message
-	if e.ReportID != "" {
-		message += " Reference: " + e.ReportID + "."
-	}
 	body, _ := json.MarshalIndent(e.Report, "", "  ")
-	return message + " Your report input is retained below:\n" + string(body)
+	return strings.TrimSuffix(e.Err.Error(), ".") + ". Your report input is retained below:\n" + string(body)
 }
-func (e *reportSubmissionError) Unwrap() error { return e.APIError }
+func (e *reportSubmissionError) Unwrap() error    { return e.Err }
+func (e *reportSubmissionError) UserFacing() bool { return true }
 func (e *reportSubmissionError) JSONErrorOutput() any {
+	code, message := "support_submission_failed", e.Err.Error()
+	var apiErr *api.APIError
+	if errors.As(e.Err, &apiErr) {
+		code, message = apiErr.Code, apiErr.Message
+	}
 	return struct {
-		OK       bool              `json:"ok"`
-		Error    string            `json:"error"`
-		Message  string            `json:"message"`
-		ReportID string            `json:"report_id,omitempty"`
-		Report   api.ReportRequest `json:"report"`
-	}{false, e.Code, e.APIError.Message, e.ReportID, e.Report}
+		OK      bool              `json:"ok"`
+		Error   string            `json:"error"`
+		Message string            `json:"message"`
+		Report  api.ReportRequest `json:"report"`
+	}{false, code, message, e.Report}
 }
 
-func validateReportInput(input *api.ReportRequest) error {
+func validateReportInput(input *api.ReportRequest, allowMissing bool) error {
 	input.Subject, input.Details = strings.TrimSpace(input.Subject), strings.TrimSpace(input.Details)
-	if !utf8.ValidString(input.Subject) || utf8.RuneCountInString(input.Subject) < 1 || utf8.RuneCountInString(input.Subject) > 200 {
+	if !utf8.ValidString(input.Subject) || input.Subject == "" && !allowMissing || utf8.RuneCountInString(input.Subject) > 200 {
 		return usageErr("--subject requires 1–200 Unicode characters")
 	}
-	if !utf8.ValidString(input.Details) || utf8.RuneCountInString(input.Details) < 1 || utf8.RuneCountInString(input.Details) > 10000 {
+	if !utf8.ValidString(input.Details) || input.Details == "" && !allowMissing || utf8.RuneCountInString(input.Details) > 10000 {
 		return usageErr("--details or --details-file requires 1–10,000 Unicode characters")
 	}
 	switch input.ReportKind {

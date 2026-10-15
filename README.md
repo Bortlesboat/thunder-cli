@@ -120,7 +120,7 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 
 ## Bug reports and feedback
 
-Run `tnr report` to enter a subject and details, review the included context, and confirm submission to Thunder support. Reports default to bugs; use `--kind feedback` for product feedback. In the details editor, press Ctrl+D to review. Cancel with Esc or Ctrl+C; cancellation sends nothing and exits with code 130.
+Run `tnr report` for a guided report in the style of `tnr create`: choose **Report a problem** or **Suggest an improvement**, write a one-sentence summary and the details, then review the report and choose **Send report**, **Edit report**, or **Cancel**. Sign in before starting. `--kind`, `--subject`, and `--details` or `--details-file` fill in their steps, which are then skipped, and supplied text is sent as given. In the details editor, Enter adds a line and Ctrl+D continues to the review. Esc goes back a step and keeps what you typed. Quit with Ctrl+C, or Q in a menu; quitting sends nothing and exits with code 130. Noninteractive reports default to bugs; use `--kind feedback` for product feedback.
 
 ```sh
 tnr report --subject "Upload connection drops" --details-file ./report.txt --component cli --instance 42
@@ -132,4 +132,4 @@ Noninteractive submission requires `--subject`, `--details` or `--details-file`,
 
 Optional context flags are `--component` (`cli`, `console`, `api`, `mcp`, `virtualization`, or `unknown`), either `--instance` or `--sandbox`, and `--occurred-at` (RFC 3339). The report includes the CLI version, build commit and date, OS, and architecture. The server records submission time and resolves the requester from your login or verified API token owner. No logs, environment variables, shell history, or workload files are collected automatically. Only include evidence you intend to share with support, and omit credentials.
 
-Confirmed submissions print an opaque report reference. Exit zero means confirmed receipt or a successful dry run. Rejections, rate limits, and unconfirmed outcomes exit nonzero and retain the entered report in the error output. JSON errors include `error`, `message`, `report_id` when available, and `report`. If `support_submission_unknown` is returned, the report may already have arrived: keep the reference and do not automatically resend. Reporting skips automatic update and subscription checks.
+Successful submissions print an opaque report reference. Exit zero means a successful submission or dry run. Any failure exits nonzero and retains the entered report in the error output, so you can submit it again. JSON errors include `error`, `message`, and `report`. Reporting skips automatic update and subscription checks.
