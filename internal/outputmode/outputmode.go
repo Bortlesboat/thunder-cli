@@ -9,8 +9,8 @@ import (
 )
 
 func init() {
-	// Go initializes ready packages in import-path order. This package precedes
-	// Bubble Tea, whose initializer otherwise queries the terminal's background.
+	// Go initializes ready packages in import-path order. The uppercase T in
+	// Thunder-Compute puts this package before Bubble Tea's terminal query.
 	if JSONRequested(os.Args[1:]) {
 		lipgloss.SetHasDarkBackground(true)
 	}

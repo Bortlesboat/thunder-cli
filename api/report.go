@@ -3,10 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"time"
 )
@@ -43,10 +41,6 @@ type ReportResponse struct {
 	ReportID string `json:"report_id"`
 }
 
-func unknownReportError(reportID string) *APIError {
-	return &APIError{Code: "support_submission_unknown", ReportID: reportID, Message: "Receipt could not be confirmed. Your report may have been received. Do not automatically resend."}
-}
-
 func (c *Client) SubmitReport(ctx context.Context, input ReportRequest) (*ReportResponse, error) {
 	addRequestBreadcrumb(http.MethodPost, supportReportPath)
 	body, err := json.Marshal(input)
@@ -71,17 +65,6 @@ func (c *Client) submitReportWithToken(ctx context.Context, body []byte, token s
 	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := c.sendRequestWithToken(ctx, http.MethodPost, supportReportPath, body, token, &httpClient)
 	if err != nil {
-		if errors.Is(err, ErrTransport) {
-			var dnsErr *net.DNSError
-			var opErr *net.OpError
-			if errors.As(err, &dnsErr) || errors.As(err, &opErr) && opErr.Op == "dial" {
-				return nil, &APIError{
-					Code:    "support_submission_failed",
-					Message: "Could not connect to Thunder support. Your report was not sent. Keep your input and try again.",
-				}
-			}
-			return nil, unknownReportError("")
-		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -91,24 +74,13 @@ func (c *Client) submitReportWithToken(ctx context.Context, body []byte, token s
 
 func (c *Client) decodeReportResponse(resp *http.Response) (*ReportResponse, error) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxReportResponseBytes+1))
-	if err != nil {
-		if resp.StatusCode >= http.StatusBadRequest {
-			return nil, reportHTTPError(resp.StatusCode, nil, resp.Header.Get("Retry-After"), c.authenticationErrorMessage)
-		}
-		return nil, unknownReportError("")
-	}
-	if len(body) > maxReportResponseBytes || resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest {
-		return nil, unknownReportError("")
-	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		return nil, reportHTTPError(resp.StatusCode, body, resp.Header.Get("Retry-After"), c.authenticationErrorMessage)
 	}
 	var result ReportResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, unknownReportError("")
-	}
-	if !result.OK || result.ReportID == "" {
-		return nil, unknownReportError(result.ReportID)
+	if err != nil || len(body) > maxReportResponseBytes || resp.StatusCode >= http.StatusMultipleChoices ||
+		json.Unmarshal(body, &result) != nil || !result.OK || result.ReportID == "" {
+		return nil, fmt.Errorf("unexpected response from Thunder support (HTTP %d)", resp.StatusCode)
 	}
 	return &result, nil
 }
@@ -121,16 +93,12 @@ func reportHTTPError(status int, body []byte, retryAfter, authenticationMessage 
 		return result
 	}
 	var parsed struct {
-		Code     string `json:"error"`
-		Message  string `json:"message"`
-		ReportID string `json:"report_id"`
+		Code    string `json:"error"`
+		Message string `json:"message"`
 	}
-	if json.Unmarshal(body, &parsed) == nil {
-		result.ReportID = parsed.ReportID
-		if parsed.Code != "" && parsed.Message != "" {
-			result.Code, result.Message = parsed.Code, parsed.Message
-			return result
-		}
+	if json.Unmarshal(body, &parsed) == nil && parsed.Code != "" && parsed.Message != "" {
+		result.Code, result.Message = parsed.Code, parsed.Message
+		return result
 	}
 	switch status {
 	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
@@ -140,11 +108,7 @@ func reportHTTPError(status int, body []byte, retryAfter, authenticationMessage 
 	case http.StatusTooManyRequests:
 		result.Code, result.Message = "support_rate_limited", "Support reporting is temporarily rate limited."
 	default:
-		if status >= 500 {
-			result.Code, result.Message = "support_submission_unknown", unknownReportError("").Message
-		} else {
-			result.Code, result.Message = "support_submission_failed", "The report was not accepted."
-		}
+		result.Code, result.Message = "support_submission_failed", "The report was not accepted."
 	}
 	return result
 }

@@ -105,7 +105,8 @@ func Execute() int {
 		JSONOutput = requestedJSON
 		tui.SetNonInteractive(JSONOutput)
 		if errors.Is(err, context.Canceled) {
-			if JSONOutput {
+			var submissionErr *reportSubmissionError
+			if JSONOutput || errors.As(err, &submissionErr) {
 				PrintError(err)
 			}
 			return 130

@@ -108,12 +108,11 @@ func (c *Client) apiHTTPError(resp *http.Response, body []byte) *APIError {
 	retryAfter, hasRetryAfter := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 	result := &APIError{StatusCode: resp.StatusCode, RetryAfter: retryAfter, HasRetryAfter: hasRetryAfter}
 	var parsed struct {
-		Message  string `json:"message"`
-		Code     string `json:"error"`
-		ReportID string `json:"report_id"`
+		Message string `json:"message"`
+		Code    string `json:"error"`
 	}
 	if json.Unmarshal(body, &parsed) == nil && parsed.Message != "" {
-		result.Message, result.Code, result.ReportID = parsed.Message, parsed.Code, parsed.ReportID
+		result.Message, result.Code = parsed.Message, parsed.Code
 	} else {
 		result.Message = fmt.Sprintf("API request failed with status %d: %s", resp.StatusCode, string(body))
 	}

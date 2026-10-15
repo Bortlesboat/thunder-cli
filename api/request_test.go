@@ -38,8 +38,8 @@ func TestSubmitReportRefreshesOnlyAfterDefiniteUnauthorizedResponse(t *testing.T
 	}{
 		{name: "401 followed by receipt", firstStatus: 401, nextStatus: 200, requests: 2, refreshes: 1},
 		{name: "second 401 stops", firstStatus: 401, nextStatus: 401, requests: 2, refreshes: 1, errorCode: "authorization_failed"},
-		{name: "unknown HTTP outcome stops", firstStatus: 502, requests: 1, errorCode: "support_submission_unknown"},
-		{name: "lost receipt stops", loseResponse: true, requests: 1, errorCode: "support_submission_unknown"},
+		{name: "upstream failure stops", firstStatus: 502, requests: 1, errorCode: "support_submission_failed"},
+		{name: "lost receipt stops", loseResponse: true, requests: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var requests atomic.Int32
@@ -70,10 +70,13 @@ func TestSubmitReportRefreshesOnlyAfterDefiniteUnauthorizedResponse(t *testing.T
 			tokens := &reportRefreshTokenSource{}
 			client := NewClientWithTokenSource(tokens, server.URL)
 			result, err := client.SubmitReport(t.Context(), ReportRequest{Subject: "Synthetic report", Details: "Synthetic evidence", Source: "cli"})
-			if tc.errorCode == "" {
+			switch {
+			case tc.loseResponse:
+				require.ErrorIs(t, err, ErrTransport)
+			case tc.errorCode == "":
 				require.NoError(t, err)
 				assert.Equal(t, "report-123", result.ReportID)
-			} else {
+			default:
 				var apiErr *APIError
 				require.ErrorAs(t, err, &apiErr)
 				assert.Equal(t, tc.errorCode, apiErr.Code)
@@ -112,15 +115,14 @@ func (b *trackedResponseBody) Close() error {
 func TestRequestDecodingFailuresCloseResponseBodies(t *testing.T) {
 	readFailure := errors.New("synthetic read failure")
 	for _, tc := range []struct {
-		name      string
-		report    bool
-		body      io.Reader
-		errorCode string
+		name   string
+		report bool
+		body   io.Reader
 	}{
-		{"ordinary malformed JSON", false, strings.NewReader(`{"valid":`), ""},
-		{"report malformed receipt", true, strings.NewReader(`{"ok":`), "support_submission_unknown"},
-		{"report oversized receipt", true, strings.NewReader(strings.Repeat("x", maxReportResponseBytes+1)), "support_submission_unknown"},
-		{"report unreadable receipt", true, iotest.ErrReader(readFailure), "support_submission_unknown"},
+		{"ordinary malformed JSON", false, strings.NewReader(`{"valid":`)},
+		{"report malformed receipt", true, strings.NewReader(`{"ok":`)},
+		{"report oversized receipt", true, strings.NewReader(strings.Repeat("x", maxReportResponseBytes+1))},
+		{"report unreadable receipt", true, iotest.ErrReader(readFailure)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := &trackedResponseBody{Reader: tc.body}
@@ -136,11 +138,6 @@ func TestRequestDecodingFailuresCloseResponseBodies(t *testing.T) {
 			}
 			require.Error(t, err)
 			assert.True(t, body.closed)
-			if tc.errorCode != "" {
-				var apiErr *APIError
-				require.ErrorAs(t, err, &apiErr)
-				assert.Equal(t, tc.errorCode, apiErr.Code)
-			}
 		})
 	}
 }

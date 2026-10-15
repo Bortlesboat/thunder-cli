@@ -23,11 +23,10 @@ import (
 // (which means the server did respond with a status >= 400).
 var ErrTransport = clierr.New("transport error")
 
-// APIError describes HTTP failures and unconfirmed support submissions.
+// APIError is returned for HTTP responses with status >= 400.
 type APIError struct {
 	StatusCode    int
 	Code          string
-	ReportID      string
 	Message       string
 	RetryAfter    time.Duration
 	HasRetryAfter bool

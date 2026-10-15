@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,8 +31,8 @@ func TestReportJSONSubmissionOutcomes(t *testing.T) {
 		{"plain rate limit", 429, `slow down`, "support_rate_limited", false},
 		{"plain rejection", 400, `invalid report`, "invalid_support_ticket", false},
 		{"rate limited", 429, `{"error":"support_rate_limited","message":"Limited"}`, "support_rate_limited", false},
-		{"unknown", 502, `{"error":"support_submission_unknown","message":"Receipt could not be confirmed","report_id":"report-123"}`, "support_submission_unknown", false},
-		{"malformed success", 200, `{"ok":`, "support_submission_unknown", false},
+		{"upstream failure", 502, `{"error":"support_submission_failed","message":"Could not submit"}`, "support_submission_failed", false},
+		{"malformed success", 200, `{"ok":`, "support_submission_failed", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var count atomic.Int32
@@ -126,4 +127,30 @@ func TestReportStdinDryRun(t *testing.T) {
 
 func TestReportCancellationUsesNormalCancellationCode(t *testing.T) {
 	require.ErrorIs(t, reportCancellation(tui.ErrCancelled), context.Canceled)
+}
+
+func TestReportSubmissionErrorRetainsInput(t *testing.T) {
+	for _, cause := range []error{
+		context.Canceled,
+		errors.New("failed to load authentication token"),
+		errors.New("failed to refresh authentication token"),
+		&api.APIError{Code: "support_submission_failed", Message: "Could not submit."},
+	} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			err := &reportSubmissionError{Err: cause, Report: api.ReportRequest{Subject: "GPU issue", Details: "Selected evidence"}}
+			require.ErrorIs(t, err, cause)
+			assert.Contains(t, err.Error(), "Selected evidence")
+			body, marshalErr := json.Marshal(err.JSONErrorOutput())
+			require.NoError(t, marshalErr)
+			var output struct {
+				OK     bool              `json:"ok"`
+				Error  string            `json:"error"`
+				Report api.ReportRequest `json:"report"`
+			}
+			require.NoError(t, json.Unmarshal(body, &output))
+			assert.False(t, output.OK)
+			assert.Equal(t, "support_submission_failed", output.Error)
+			assert.Equal(t, err.Report, output.Report)
+		})
+	}
 }
