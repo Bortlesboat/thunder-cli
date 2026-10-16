@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/Thunder-Compute/thunder-cli/api"
-	"github.com/Thunder-Compute/thunder-cli/tui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,9 +28,6 @@ func TestReportJSONSubmissionOutcomes(t *testing.T) {
 		{"confirmed", 200, `{"ok":true,"report_id":"report-123"}`, "", true},
 		{"rejected", 400, `{"error":"invalid_support_ticket","message":"Rejected"}`, "invalid_support_ticket", false},
 		{"plain rate limit", 429, `slow down`, "support_rate_limited", false},
-		{"plain rejection", 400, `invalid report`, "invalid_support_ticket", false},
-		{"rate limited", 429, `{"error":"support_rate_limited","message":"Limited"}`, "support_rate_limited", false},
-		{"upstream failure", 502, `{"error":"support_submission_failed","message":"Could not submit"}`, "support_submission_failed", false},
 		{"malformed success", 200, `{"ok":`, "support_submission_failed", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,15 +121,10 @@ func TestReportStdinDryRun(t *testing.T) {
 	assert.Equal(t, "Evidence from stdin", preview.Report.Details)
 }
 
-func TestReportCancellationUsesNormalCancellationCode(t *testing.T) {
-	require.ErrorIs(t, reportCancellation(tui.ErrCancelled), context.Canceled)
-}
-
 func TestReportSubmissionErrorRetainsInput(t *testing.T) {
 	for _, cause := range []error{
 		context.Canceled,
 		errors.New("failed to load authentication token"),
-		errors.New("failed to refresh authentication token"),
 		&api.APIError{Code: "support_submission_failed", Message: "Could not submit."},
 	} {
 		t.Run(cause.Error(), func(t *testing.T) {

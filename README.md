@@ -106,21 +106,9 @@ tnr delete 0        # Delete instance
 reached, create a named API token in Console Settings and run
 `tnr login --token <named_api_token>` instead.
 
-# Local and staging testing (monorepo)
+# Bug reports and feedback
 
-For a local API, run `make cli-local ARGS="login"`, `make cli-local ARGS="status"`, or `make cli-local ARGS="logout --revoke"` from the Thundernetes repository root. This builds `cli/dist/tnr-local` and targets `http://localhost:8443`, storing credentials in `cli/dist/local-home` separately from staging and production. Start your local API first; the runner does not start it. Browser login also needs the API's OAuth configuration and a running authorization page, normally the local Console at `http://localhost:3000`. For arguments requiring shell quoting, use `bash cli/scripts/tnr-local.sh <arguments>`.
-
-From the Thundernetes repository root, run `make cli-staging ARGS="login"`, `make cli-staging ARGS="status"`, or `make cli-staging ARGS="logout --revoke"`. Each invocation builds the current branch through Bazel and runs `cli/dist/tnr-staging` against the URL supplied through `TNR_STAGING_API_URL`. The monorepo Makefile supplies the default; the CLI scripts contain no staging endpoint. Credentials are saved separately in `cli/dist/staging-home`, an inherited `TNR_API_TOKEN` is ignored, and self-updates are disabled. These generated files are gitignored. For arguments requiring shell quoting, export `TNR_STAGING_API_URL` and run `bash cli/scripts/tnr-staging.sh <arguments>` directly.
-
-Browser login requires the staging API's `/v1/auth/cli/oauth-config` endpoint and staging Connected App configuration. A 404 indicates the route is unavailable; a 503 can indicate missing OAuth configuration. Local builds do not deploy or configure the API.
-
-# License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
-
-## Bug reports and feedback
-
-Run `tnr report` for a guided report in the style of `tnr create`: choose **Report a problem** or **Suggest an improvement**, write a one-sentence summary and the details, then review the report and choose **Send report**, **Edit report**, or **Cancel**. Sign in before starting. `--kind`, `--subject`, and `--details` or `--details-file` fill in their steps, which are then skipped, and supplied text is sent as given. In the details editor, Enter adds a line and Ctrl+D continues to the review. Esc goes back a step and keeps what you typed. Quit with Ctrl+C, or Q in a menu; quitting sends nothing and exits with code 130. Noninteractive reports default to bugs; use `--kind feedback` for product feedback.
+Run `tnr report` for a guided report in the style of `tnr create`: choose **Report a problem** or **Suggest an improvement**, write a one-sentence summary and the details, then review the report and choose **Send report**, **Edit report**, or **Cancel**. Sign in before starting. `--kind`, `--subject`, and `--details` or `--details-file` fill in their steps, which are then skipped, and supplied text is sent as given. Quitting sends nothing and exits with code 130. Noninteractive reports default to bugs; use `--kind feedback` for product feedback.
 
 ```sh
 tnr report --subject "Upload connection drops" --details-file ./report.txt --component cli --instance 42
@@ -133,3 +121,7 @@ Noninteractive submission requires `--subject`, `--details` or `--details-file`,
 Optional context flags are `--component` (`cli`, `console`, `api`, `mcp`, `virtualization`, or `unknown`), either `--instance` or `--sandbox`, and `--occurred-at` (RFC 3339). The report includes the CLI version, build commit and date, OS, and architecture. The server records submission time and resolves the requester from your login or verified API token owner. No logs, environment variables, shell history, or workload files are collected automatically. Only include evidence you intend to share with support, and omit credentials.
 
 Successful submissions print an opaque report reference. Exit zero means a successful submission or dry run. Any failure exits nonzero and retains the entered report in the error output, so you can submit it again. JSON errors include `error`, `message`, and `report`. Reporting skips automatic update and subscription checks.
+
+# License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

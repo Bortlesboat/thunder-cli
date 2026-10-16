@@ -51,7 +51,7 @@ func (c *Client) withAuthentication(ctx context.Context, attempt func(string) er
 }
 
 func (c *Client) doRequestWithToken(ctx context.Context, method, path string, bodyData []byte, result interface{}, token string) error {
-	resp, err := c.sendRequestWithToken(ctx, method, path, bodyData, token, c.httpClient)
+	resp, err := c.sendRequestWithToken(ctx, method, path, bodyData, token)
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func (c *Client) doRequestWithToken(ctx context.Context, method, path string, bo
 	return c.decodeAPIResponse(resp, result)
 }
 
-func (c *Client) sendRequestWithToken(ctx context.Context, method, path string, bodyData []byte, token string, httpClient *http.Client) (*http.Response, error) {
+func (c *Client) sendRequestWithToken(ctx context.Context, method, path string, bodyData []byte, token string) (*http.Response, error) {
 	var bodyReader io.Reader
 	if bodyData != nil {
 		bodyReader = bytes.NewReader(bodyData)
@@ -78,7 +78,7 @@ func (c *Client) sendRequestWithToken(ctx context.Context, method, path string, 
 		req.Header.Set("Platform", platform)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to make request: %w", ErrTransport, err)
 	}

@@ -5,13 +5,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
-	"time"
+	"slices"
 )
 
 const (
 	supportReportPath      = "/support/tickets"
 	maxReportResponseBytes = 64 << 10
+)
+
+// The API's support ticket limits and accepted values, which reports must meet.
+const (
+	MaxReportSubjectRunes    = 200
+	MaxReportDetailsRunes    = 10000
+	MaxReportResourceIDRunes = 128
+	MaxReportRequestBytes    = 64 << 10
+)
+
+var (
+	// ReportCategories maps each report kind to the support category the API
+	// requires with it.
+	ReportCategories = map[string]string{"bug": "technical_issue", "feedback": "product_feedback"}
+	ReportKinds      = slices.Sorted(maps.Keys(ReportCategories))
+	ReportComponents = []string{"cli", "console", "api", "mcp", "virtualization", "unknown"}
 )
 
 type ReportContext struct {
@@ -61,9 +78,7 @@ func (c *Client) SubmitReport(ctx context.Context, input ReportRequest) (*Report
 }
 
 func (c *Client) submitReportWithToken(ctx context.Context, body []byte, token string) (*ReportResponse, error) {
-	httpClient := *c.httpClient
-	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err := c.sendRequestWithToken(ctx, http.MethodPost, supportReportPath, body, token, &httpClient)
+	resp, err := c.sendRequestWithToken(ctx, http.MethodPost, supportReportPath, body, token)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +90,11 @@ func (c *Client) submitReportWithToken(ctx context.Context, body []byte, token s
 func (c *Client) decodeReportResponse(resp *http.Response) (*ReportResponse, error) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxReportResponseBytes+1))
 	if resp.StatusCode >= http.StatusBadRequest {
-		return nil, reportHTTPError(resp.StatusCode, body, resp.Header.Get("Retry-After"), c.authenticationErrorMessage)
+		apiErr := c.apiHTTPError(resp, body)
+		if apiErr.Code == "" {
+			apiErr.Code, apiErr.Message = reportErrorFallback(resp.StatusCode)
+		}
+		return nil, apiErr
 	}
 	var result ReportResponse
 	if err != nil || len(body) > maxReportResponseBytes || resp.StatusCode >= http.StatusMultipleChoices ||
@@ -85,30 +104,14 @@ func (c *Client) decodeReportResponse(resp *http.Response) (*ReportResponse, err
 	return &result, nil
 }
 
-func reportHTTPError(status int, body []byte, retryAfter, authenticationMessage string) *APIError {
-	result := &APIError{StatusCode: status}
-	result.RetryAfter, result.HasRetryAfter = parseRetryAfter(retryAfter, time.Now())
-	if status == http.StatusUnauthorized {
-		result.Code, result.Message = "authorization_failed", authenticationMessage
-		return result
-	}
-	var parsed struct {
-		Code    string `json:"error"`
-		Message string `json:"message"`
-	}
-	if json.Unmarshal(body, &parsed) == nil && parsed.Code != "" && parsed.Message != "" {
-		result.Code, result.Message = parsed.Code, parsed.Message
-		return result
-	}
+func reportErrorFallback(status int) (code, message string) {
 	switch status {
 	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
-		result.Code, result.Message = "invalid_support_ticket", "The report was rejected. Check the input and its size limits."
+		return "invalid_support_ticket", "The report was rejected. Check the input and its size limits."
 	case http.StatusForbidden:
-		result.Code, result.Message = "authorization_failed", "You are not authorized to submit this report."
+		return "authorization_failed", "You are not authorized to submit this report."
 	case http.StatusTooManyRequests:
-		result.Code, result.Message = "support_rate_limited", "Support reporting is temporarily rate limited."
-	default:
-		result.Code, result.Message = "support_submission_failed", "The report was not accepted."
+		return "support_rate_limited", "Support reporting is temporarily rate limited."
 	}
-	return result
+	return "support_submission_failed", "The report was not accepted."
 }

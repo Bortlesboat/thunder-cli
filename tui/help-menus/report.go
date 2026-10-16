@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Thunder-Compute/thunder-cli/api"
 	"github.com/spf13/cobra"
 )
 
@@ -53,13 +54,13 @@ func RenderReportHelp(cmd *cobra.Command) {
 	output.WriteString(SectionStyle.Render("● FLAGS"))
 	output.WriteString("\n\n")
 	for _, flag := range []struct{ name, desc string }{
-		{"--kind", "Report type: bug or feedback"},
-		{"--subject", "One-line summary, up to 200 characters"},
-		{"--details", "Report text, up to 10,000 characters"},
+		{"--kind", "Report type: " + strings.Join(api.ReportKinds, " or ")},
+		{"--subject", fmt.Sprintf("One-line summary, up to %d characters", api.MaxReportSubjectRunes)},
+		{"--details", fmt.Sprintf("Report text, up to %d characters", api.MaxReportDetailsRunes)},
 		{"--details-file", "Read the report text from a file, or - for standard input"},
 		{"--instance", "Instance the report is about"},
 		{"--sandbox", "Sandbox the report is about"},
-		{"--component", "Area: cli, console, api, mcp, virtualization or unknown"},
+		{"--component", "Area: " + strings.Join(api.ReportComponents, ", ")},
 		{"--occurred-at", "When it happened, as an RFC 3339 time"},
 		{"--dry-run", "Preview the report without signing in or sending it"},
 		{"--yes, -y", "Send without the review step"},

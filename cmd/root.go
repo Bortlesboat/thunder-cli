@@ -64,19 +64,11 @@ func printVersion(cmd *cobra.Command) {
 	fmt.Fprint(cmd.OutOrStdout(), versionTemplate())
 }
 
-// detectJSONOutput runs before Cobra resolves commands or parses flags so
-// parse failures such as an unknown command still honor --json. Invalid
-// --json values are treated as a request for JSON, allowing the validation
-// error itself to be returned as JSON.
-func detectJSONOutput(args []string) bool {
-	return outputmode.JSONRequested(args)
-}
-
 // Execute adds all child commands to the root command and sets flags appropriately.
 // Returns the process exit code; main is responsible for os.Exit so deferred tty
 // restore runs on every path (os.Exit skips defers).
 func Execute() int {
-	requestedJSON := detectJSONOutput(os.Args[1:])
+	requestedJSON := outputmode.JSONRequested(os.Args[1:])
 	JSONOutput = requestedJSON
 	tui.SetNonInteractive(JSONOutput)
 

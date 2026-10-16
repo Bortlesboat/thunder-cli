@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +20,8 @@ import (
 	termx "github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 )
+
+const maxDetailsFileBytes = utf8.UTFMax * api.MaxReportDetailsRunes
 
 var reportCmd = newReportCommand()
 
@@ -32,11 +35,11 @@ func newReportCommand() *cobra.Command {
 		Annotations:  map[string]string{"skipUpdateCheck": "true"},
 		RunE:         runReport,
 	}
-	cmd.Flags().String("subject", "", "Short summary (1–200 Unicode characters)")
-	cmd.Flags().String("details", "", "Report text (1–10,000 Unicode characters)")
+	cmd.Flags().String("subject", "", fmt.Sprintf("Short summary (1–%d Unicode characters)", api.MaxReportSubjectRunes))
+	cmd.Flags().String("details", "", fmt.Sprintf("Report text (1–%d Unicode characters)", api.MaxReportDetailsRunes))
 	cmd.Flags().String("details-file", "", "Read report text from this file, or - for standard input")
-	cmd.Flags().String("kind", "bug", "Report kind: bug or feedback")
-	cmd.Flags().String("component", "", "Suspected component: cli, console, api, mcp, virtualization, or unknown")
+	cmd.Flags().String("kind", "bug", "Report kind: "+strings.Join(api.ReportKinds, " or "))
+	cmd.Flags().String("component", "", "Suspected component: "+strings.Join(api.ReportComponents, ", "))
 	cmd.Flags().String("instance", "", "Instance identifier (mutually exclusive with --sandbox)")
 	cmd.Flags().String("sandbox", "", "Sandbox identifier (mutually exclusive with --instance)")
 	cmd.Flags().String("occurred-at", "", "Occurrence time in RFC 3339 format")
@@ -48,55 +51,22 @@ func newReportCommand() *cobra.Command {
 func init() { rootCmd.AddCommand(reportCmd) }
 
 func runReport(cmd *cobra.Command, _ []string) error {
-	get := func(name string) string {
-		value, _ := cmd.Flags().GetString(name)
-		return value
-	}
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	input := api.ReportRequest{
-		Subject:    get("subject"),
-		Details:    get("details"),
-		ReportKind: get("kind"),
-		Source:     "cli",
-		Context: api.ReportContext{
-			SuspectedComponent: get("component"),
-			OccurredAt:         get("occurred-at"),
-			InstanceID:         get("instance"),
-			SandboxID:          get("sandbox"),
-			PreparedAt:         time.Now().UTC().Format(time.RFC3339Nano),
-			CLIVersion:         version.BuildVersion,
-			BuildCommit:        version.BuildCommit,
-			BuildDate:          version.BuildDate,
-			OS:                 runtime.GOOS,
-			Architecture:       runtime.GOARCH,
-		},
-	}
 	if cmd.Flags().Changed("details") && cmd.Flags().Changed("details-file") {
 		return usageErr("--details and --details-file are mutually exclusive")
 	}
 	if cmd.Flags().Changed("instance") && cmd.Flags().Changed("sandbox") {
 		return usageErr("--instance and --sandbox are mutually exclusive")
 	}
-	if path := get("details-file"); cmd.Flags().Changed("details-file") {
-		var reader io.Reader = cmd.InOrStdin()
-		if path != "-" {
-			file, err := os.Open(path)
-			if err != nil {
-				return usageErr("could not open --details-file: %v", err)
-			}
-			defer file.Close()
-			reader = file
-		}
-		data, err := io.ReadAll(io.LimitReader(reader, 40001))
+	input := reportRequestFromFlags(cmd)
+	if cmd.Flags().Changed("details-file") {
+		details, err := readDetailsFile(cmd)
 		if err != nil {
-			return usageErr("could not read --details-file: %v", err)
+			return err
 		}
-		if len(data) > 40000 {
-			return usageErr("details file exceeds 40,000 bytes; details must contain at most 10,000 Unicode characters")
-		}
-		input.Details = string(data)
+		input.Details = details
 	}
-	interactive := tui.IsInteractive() && termx.IsTerminal(os.Stdin.Fd()) && !JSONOutput
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	interactive := tui.IsInteractive() && termx.IsTerminal(os.Stdin.Fd())
 	if err := validateReportInput(&input, interactive); err != nil {
 		return err
 	}
@@ -130,23 +100,18 @@ func runReport(cmd *cobra.Command, _ []string) error {
 	}
 	preview := reportPreview{
 		DryRun:    dryRun,
-		Submitted: false,
 		Requester: "Resolved by the server after authentication; absent from this preview.",
 		Report:    input,
 	}
 	if dryRun {
-		if JSONOutput {
-			printJSON(preview)
-		} else {
-			renderReportPreview(cmd.OutOrStdout(), preview)
-		}
+		printJSON(preview)
 		return nil
 	}
 	if !YesFlag && !interactive {
 		return usageErr("provide --subject and --details or --details-file, and use --yes to submit noninteractively; use --dry-run to preview")
 	}
 	if interactive && YesFlag {
-		renderReportPreview(cmd.OutOrStdout(), preview)
+		printJSON(preview)
 	}
 	result, err := client.SubmitReport(cmd.Context(), input)
 	if err != nil {
@@ -161,6 +126,52 @@ func runReport(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+func reportRequestFromFlags(cmd *cobra.Command) api.ReportRequest {
+	get := func(name string) string {
+		value, _ := cmd.Flags().GetString(name)
+		return value
+	}
+	return api.ReportRequest{
+		Subject:    get("subject"),
+		Details:    get("details"),
+		ReportKind: get("kind"),
+		Source:     "cli",
+		Context: api.ReportContext{
+			SuspectedComponent: get("component"),
+			OccurredAt:         get("occurred-at"),
+			InstanceID:         get("instance"),
+			SandboxID:          get("sandbox"),
+			PreparedAt:         time.Now().UTC().Format(time.RFC3339Nano),
+			CLIVersion:         version.BuildVersion,
+			BuildCommit:        version.BuildCommit,
+			BuildDate:          version.BuildDate,
+			OS:                 runtime.GOOS,
+			Architecture:       runtime.GOARCH,
+		},
+	}
+}
+
+func readDetailsFile(cmd *cobra.Command) (string, error) {
+	path, _ := cmd.Flags().GetString("details-file")
+	var reader io.Reader = cmd.InOrStdin()
+	if path != "-" {
+		file, err := os.Open(path)
+		if err != nil {
+			return "", usageErr("could not open --details-file: %v", err)
+		}
+		defer file.Close()
+		reader = file
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, maxDetailsFileBytes+1))
+	if err != nil {
+		return "", usageErr("could not read --details-file: %v", err)
+	}
+	if len(data) > maxDetailsFileBytes {
+		return "", usageErr("details file exceeds %d bytes; details must contain at most %d Unicode characters", maxDetailsFileBytes, api.MaxReportDetailsRunes)
+	}
+	return string(data), nil
+}
+
 func reportCancellation(err error) error {
 	if errors.Is(err, tui.ErrCancelled) {
 		return context.Canceled
@@ -173,11 +184,6 @@ type reportPreview struct {
 	Submitted bool              `json:"submitted"`
 	Requester string            `json:"requester"`
 	Report    api.ReportRequest `json:"report"`
-}
-
-func renderReportPreview(out io.Writer, preview reportPreview) {
-	data, _ := json.MarshalIndent(preview, "", "  ")
-	fmt.Fprintln(out, string(data))
 }
 
 type reportSubmissionError struct {
@@ -207,33 +213,25 @@ func (e *reportSubmissionError) JSONErrorOutput() any {
 
 func validateReportInput(input *api.ReportRequest, allowMissing bool) error {
 	input.Subject, input.Details = strings.TrimSpace(input.Subject), strings.TrimSpace(input.Details)
-	if !utf8.ValidString(input.Subject) || input.Subject == "" && !allowMissing || utf8.RuneCountInString(input.Subject) > 200 {
-		return usageErr("--subject requires 1–200 Unicode characters")
+	if err := validateReportText(input.Subject, "--subject", api.MaxReportSubjectRunes, allowMissing); err != nil {
+		return err
 	}
-	if !utf8.ValidString(input.Details) || input.Details == "" && !allowMissing || utf8.RuneCountInString(input.Details) > 10000 {
-		return usageErr("--details or --details-file requires 1–10,000 Unicode characters")
+	if err := validateReportText(input.Details, "--details or --details-file", api.MaxReportDetailsRunes, allowMissing); err != nil {
+		return err
 	}
-	switch input.ReportKind {
-	case "bug":
-		input.Category = "technical_issue"
-	case "feedback":
-		input.Category = "product_feedback"
-	default:
-		return usageErr("--kind must be bug or feedback")
+	category, ok := api.ReportCategories[input.ReportKind]
+	if !ok {
+		return usageErr("--kind must be %s", strings.Join(api.ReportKinds, " or "))
 	}
-	switch input.Context.SuspectedComponent {
-	case "", "cli", "console", "api", "mcp", "virtualization", "unknown":
-	default:
-		return usageErr("--component must be cli, console, api, mcp, virtualization, or unknown")
+	input.Category = category
+	if component := input.Context.SuspectedComponent; component != "" && !slices.Contains(api.ReportComponents, component) {
+		return usageErr("--component must be one of: %s", strings.Join(api.ReportComponents, ", "))
 	}
 	for _, field := range []*string{&input.Context.InstanceID, &input.Context.SandboxID} {
 		*field = strings.TrimSpace(*field)
-		if !utf8.ValidString(*field) || utf8.RuneCountInString(*field) > 128 || strings.ContainsAny(*field, "\x00\r\n") {
-			return usageErr("resource identifiers must contain at most 128 characters without line breaks")
+		if !utf8.ValidString(*field) || utf8.RuneCountInString(*field) > api.MaxReportResourceIDRunes || strings.ContainsAny(*field, "\x00\r\n") {
+			return usageErr("resource identifiers must contain at most %d characters without line breaks", api.MaxReportResourceIDRunes)
 		}
-	}
-	if input.Context.InstanceID != "" && input.Context.SandboxID != "" {
-		return usageErr("--instance and --sandbox are mutually exclusive")
 	}
 	if input.Context.OccurredAt != "" {
 		timestamp, err := time.Parse(time.RFC3339, input.Context.OccurredAt)
@@ -243,8 +241,21 @@ func validateReportInput(input *api.ReportRequest, allowMissing bool) error {
 		input.Context.OccurredAt = timestamp.UTC().Format(time.RFC3339Nano)
 	}
 	body, _ := json.Marshal(input)
-	if len(body) > 65536 {
-		return usageErr("encoded report exceeds the 64 KiB request limit")
+	if len(body) > api.MaxReportRequestBytes {
+		return usageErr("encoded report exceeds the %d KiB request limit", api.MaxReportRequestBytes/1024)
+	}
+	return nil
+}
+
+func validateReportText(text, flags string, limit int, allowMissing bool) error {
+	if text == "" && !allowMissing {
+		return usageErr("%s is required", flags)
+	}
+	if !utf8.ValidString(text) {
+		return usageErr("%s must be valid UTF-8 text", flags)
+	}
+	if utf8.RuneCountInString(text) > limit {
+		return usageErr("%s must be at most %d Unicode characters", flags, limit)
 	}
 	return nil
 }

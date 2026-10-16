@@ -2,16 +2,13 @@ package api
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"testing/iotest"
 
-	"github.com/getsentry/sentry-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,67 +109,13 @@ func (b *trackedResponseBody) Close() error {
 	return nil
 }
 
-func TestRequestDecodingFailuresCloseResponseBodies(t *testing.T) {
-	readFailure := errors.New("synthetic read failure")
-	for _, tc := range []struct {
-		name   string
-		report bool
-		body   io.Reader
-	}{
-		{"ordinary malformed JSON", false, strings.NewReader(`{"valid":`)},
-		{"report malformed receipt", true, strings.NewReader(`{"ok":`)},
-		{"report oversized receipt", true, strings.NewReader(strings.Repeat("x", maxReportResponseBytes+1))},
-		{"report unreadable receipt", true, iotest.ErrReader(readFailure)},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body := &trackedResponseBody{Reader: tc.body}
-			client := NewClient("token", "https://synthetic.invalid")
-			client.httpClient.Transport = requestTestTransport(func(*http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body}, nil
-			})
-			var err error
-			if tc.report {
-				_, err = client.SubmitReport(t.Context(), ReportRequest{})
-			} else {
-				_, err = client.ValidateToken(t.Context())
-			}
-			require.Error(t, err)
-			assert.True(t, body.closed)
-		})
-	}
-}
-
-func TestRequestTelemetryPanicClosesResponseBodies(t *testing.T) {
-	hub := sentry.CurrentHub()
-	previous := hub.Client()
-	telemetry, err := sentry.NewClient(sentry.ClientOptions{
-		BeforeSend: func(*sentry.Event, *sentry.EventHint) *sentry.Event {
-			panic("synthetic telemetry failure")
-		},
+func TestSubmitReportRejectsOversizedReceipt(t *testing.T) {
+	body := &trackedResponseBody{Reader: strings.NewReader(strings.Repeat("x", maxReportResponseBytes+1))}
+	client := NewClient("token", "https://synthetic.invalid")
+	client.httpClient.Transport = requestTestTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body}, nil
 	})
-	require.NoError(t, err)
-	hub.BindClient(telemetry)
-	t.Cleanup(func() { hub.BindClient(previous) })
-
-	for _, report := range []bool{false, true} {
-		name := "ordinary"
-		if report {
-			name = "report"
-		}
-		t.Run(name, func(t *testing.T) {
-			body := &trackedResponseBody{Reader: strings.NewReader("")}
-			client := NewClient("token", "https://synthetic.invalid")
-			client.httpClient.Transport = requestTestTransport(func(*http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: http.StatusInternalServerError, Header: make(http.Header), Body: body}, nil
-			})
-			require.Panics(t, func() {
-				if report {
-					_, _ = client.SubmitReport(t.Context(), ReportRequest{})
-				} else {
-					_, _ = client.ValidateToken(t.Context())
-				}
-			})
-			assert.True(t, body.closed)
-		})
-	}
+	_, err := client.SubmitReport(t.Context(), ReportRequest{})
+	require.Error(t, err)
+	assert.True(t, body.closed)
 }

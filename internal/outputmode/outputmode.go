@@ -16,6 +16,10 @@ func init() {
 	}
 }
 
+// JSONRequested reports whether args ask for JSON output. It runs before Cobra
+// resolves commands or parses flags, so parse failures such as an unknown
+// command still honor --json. An invalid --json value counts as a request, so
+// its validation error is returned as JSON too.
 func JSONRequested(args []string) bool {
 	requested := false
 	for _, arg := range args {

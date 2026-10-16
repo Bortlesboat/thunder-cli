@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func pressReportKeys(model reportModel, keys ...tea.Msg) reportModel {
-	for _, key := range keys {
-		next, _ := model.Update(key)
+func sendReportMsgs(model reportModel, msgs ...tea.Msg) reportModel {
+	for _, msg := range msgs {
+		next, _ := model.Update(msg)
 		model = next.(reportModel)
 	}
 	return model
@@ -45,7 +45,7 @@ func TestReportPreservesPastesAndValidatesBeforeReview(t *testing.T) {
 				finish = reportKey(tea.KeyCtrlD)
 			}
 			text := strings.Repeat("界", tc.length)
-			model = pressReportKeys(model, reportText(text), finish)
+			model = sendReportMsgs(model, reportText(text), finish)
 			value := model.subjectInput.Value()
 			if tc.step == reportStepDetails {
 				value = model.detailsInput.Value()
@@ -59,7 +59,7 @@ func TestReportPreservesPastesAndValidatesBeforeReview(t *testing.T) {
 
 func TestReportFlowKeepsTextWhenGoingBackAndEditing(t *testing.T) {
 	model := newReportModel(ReportInput{}, nil, true)
-	model = pressReportKeys(model,
+	model = sendReportMsgs(model,
 		reportKey(tea.KeyDown), reportKey(tea.KeyEnter),
 		reportText("Show readiness"), reportKey(tea.KeyEnter),
 		reportText("A Ready column"), reportKey(tea.KeyEsc),
@@ -68,13 +68,13 @@ func TestReportFlowKeepsTextWhenGoingBackAndEditing(t *testing.T) {
 	assert.Equal(t, "Show readiness", model.subjectInput.Value())
 	assert.Equal(t, "A Ready column", model.detailsInput.Value())
 
-	model = pressReportKeys(model, reportKey(tea.KeyEnter), reportKey(tea.KeyCtrlD))
+	model = sendReportMsgs(model, reportKey(tea.KeyEnter), reportKey(tea.KeyCtrlD))
 	assert.Equal(t, reportStepConfirm, model.step)
 	assert.Contains(t, model.View(), "Product feedback")
-	model = pressReportKeys(model, reportKey(tea.KeyDown), reportKey(tea.KeyEnter))
+	model = sendReportMsgs(model, reportKey(tea.KeyDown), reportKey(tea.KeyEnter))
 	assert.Equal(t, reportStepSummary, model.step, "Edit report returns to the summary")
 
-	model = pressReportKeys(model, reportKey(tea.KeyEnter), reportKey(tea.KeyCtrlD), reportKey(tea.KeyEnter))
+	model = sendReportMsgs(model, reportKey(tea.KeyEnter), reportKey(tea.KeyCtrlD), reportKey(tea.KeyEnter))
 	assert.True(t, model.done)
 	assert.Equal(t, ReportInput{Kind: "feedback", Subject: "Show readiness", Details: "A Ready column"}, model.result())
 }
@@ -87,7 +87,7 @@ func TestReportPresetsSkipTheirSteps(t *testing.T) {
 	assert.Contains(t, view, "[✓ Details]")
 	assert.Contains(t, view, "42")
 
-	assert.True(t, pressReportKeys(model, reportKey(tea.KeyEsc)).quitting)
+	assert.True(t, sendReportMsgs(model, reportKey(tea.KeyEsc)).quitting)
 	assert.True(t, newReportModel(ReportInput{Kind: "bug", Subject: "Disk full", Details: "Evidence"}, nil, false).done)
 }
 
@@ -99,24 +99,23 @@ func TestReportFillsTheTerminalWithHeaderVisible(t *testing.T) {
 		// The terminal is taller than the whole review.
 		roomToSpare bool
 	}{
-		{reportStepDetails, 100, 11, true, false},
-		{reportStepDetails, 120, 30, true, false},
-		{reportStepDetails, 80, 14, false, false},
-		{reportStepConfirm, 80, 11, true, false},
-		{reportStepConfirm, 120, 20, true, false},
-		{reportStepConfirm, 60, 14, false, false},
-		{reportStepConfirm, 120, 30, true, true},
-		{reportStepConfirm, 120, 60, true, true},
-		{reportStepConfirm, 60, 60, false, true},
+		{reportStepDetails, 100, 11, true, false}, // box without padding
+		{reportStepDetails, 120, 30, true, false}, // padded box
+		{reportStepDetails, 80, 14, false, false}, // summary line instead of the box
+		{reportStepConfirm, 80, 11, true, false},  // inline labels, description cut
+		{reportStepConfirm, 60, 14, false, false}, // inline labels, description cut
+		{reportStepConfirm, 120, 30, true, true},  // inline labels
+		{reportStepConfirm, 120, 60, true, true},  // labels above values, padded
+		{reportStepConfirm, 60, 60, false, true},  // labels above values, padded
 	} {
 		t.Run(fmt.Sprintf("%s at %dx%d", reportStepNames[tc.step], tc.width, tc.height), func(t *testing.T) {
 			model := newReportModel(ReportInput{Kind: "bug", Subject: "Disk full"}, []ReportField{{Label: "Instance", Value: "42"}}, true)
-			model = pressReportKeys(model, tea.WindowSizeMsg{Width: tc.width, Height: tc.height}, reportText(strings.Repeat("line\n", 20)+"last"))
+			model = sendReportMsgs(model, tea.WindowSizeMsg{Width: tc.width, Height: tc.height}, reportText(strings.Repeat("line\n", 20)+"last"))
 			if tc.step == reportStepConfirm {
-				model = pressReportKeys(model, reportKey(tea.KeyCtrlD))
+				model = sendReportMsgs(model, reportKey(tea.KeyCtrlD))
 			}
 			assert.Equal(t, tc.step, model.step)
-			assert.Equal(t, tc.sideBySide, model.sideBySide())
+			assert.Equal(t, tc.sideBySide, model.frame().sideBySide)
 			view := model.View()
 			if tc.roomToSpare {
 				assert.Less(t, lipgloss.Height(view), tc.height, "the review stops growing once the whole report shows")

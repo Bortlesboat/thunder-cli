@@ -14,14 +14,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Thunder-Compute/thunder-cli/api"
 	"github.com/Thunder-Compute/thunder-cli/tui/theme"
 )
 
 const (
-	reportSubjectLimit = 200
-	reportDetailsLimit = 10000
-	reportMaxWidth     = 76
-	reportMinWidth     = 30
+	reportMaxWidth = 76
+	reportMinWidth = 30
+	// The terminal width assumed until Bubble Tea reports the real one.
+	reportDefaultTerminalWidth = 80
 	// The details editor's rows while the terminal height is unknown, and the
 	// fewest it gets on a short terminal.
 	reportEditorRows    = 6
@@ -67,11 +68,7 @@ const (
 	reportCancel
 )
 
-var reportActionLabels = map[reportAction]string{
-	reportSend:   "✓ Send report",
-	reportEdit:   "✎ Edit report",
-	reportCancel: "✗ Cancel",
-}
+var reportActionLabels = []string{"✓ Send report", "✎ Edit report", "✗ Cancel"}
 
 // ReportInput is a report's kind ("bug" or "feedback") and text. RunReport
 // prompts for each empty field and uses supplied fields as given.
@@ -88,14 +85,18 @@ type ReportField struct {
 }
 
 type reportModel struct {
-	step         reportStep
-	cursor       int
-	kind         int
+	step      reportStep
+	cursor    int
+	kindIndex int
+	// subject and details are the accepted text: as supplied, or as submitted
+	// from the inputs. Supplied text never goes into the inputs, whose SetValue
+	// rewrites tabs and control characters and cuts details at 99 lines.
 	subject      string
 	details      string
 	subjectInput textinput.Model
 	detailsInput textarea.Model
 	skipped      map[reportStep]bool
+	confirm      bool
 	context      []ReportField
 	validation   string
 	// terminalWidth is the whole terminal's width, which the summary box
@@ -144,17 +145,17 @@ func newReportModel(input ReportInput, context []ReportField, confirm bool) repo
 			reportStepType:    input.Kind != "",
 			reportStepSummary: input.Subject != "",
 			reportStepDetails: input.Details != "",
-			reportStepConfirm: !confirm,
 		},
+		confirm: confirm,
 		context: context,
 		styles:  NewPanelStyles(),
 	}
 	for i, kind := range reportKinds {
 		if kind.value == input.Kind {
-			m.kind = i
+			m.kindIndex = i
 		}
 	}
-	m.setWidth(80)
+	m.setWidth(reportDefaultTerminalWidth)
 	if first := m.nextStep(-1); first >= 0 {
 		m.enter(first)
 	} else {
@@ -167,12 +168,17 @@ func newReportModel(input ReportInput, context []ReportField, confirm bool) repo
 func (m *reportModel) setWidth(terminalWidth int) {
 	m.terminalWidth = max(reportMinWidth, terminalWidth)
 	m.width = min(m.terminalWidth, reportMaxWidth)
-	m.subjectInput.Width = m.width - 3
+	// The cursor takes a column after the last character.
+	m.subjectInput.Width = m.width - lipgloss.Width(m.subjectInput.Prompt) - 1
 }
 
 // nextStep returns the first step after from that the user fills in, or -1.
 func (m reportModel) nextStep(from reportStep) reportStep {
-	for step := from + 1; step <= reportStepConfirm; step++ {
+	last := reportStepDetails
+	if m.confirm {
+		last = reportStepConfirm
+	}
+	for step := from + 1; step <= last; step++ {
 		if !m.skipped[step] {
 			return step
 		}
@@ -215,9 +221,9 @@ func (m *reportModel) enter(step reportStep) tea.Cmd {
 	m.detailsInput.Blur()
 	switch step {
 	case reportStepType:
-		m.cursor = m.kind
+		m.cursor = m.kindIndex
 	case reportStepSummary:
-		m.subjectInput.Placeholder = "Example: " + reportKinds[m.kind].summaryExample
+		m.subjectInput.Placeholder = "Example: " + reportKinds[m.kindIndex].summaryExample
 		return m.subjectInput.Focus()
 	case reportStepDetails:
 		return m.detailsInput.Focus()
@@ -263,13 +269,14 @@ func (m *reportModel) fitEditor() {
 	if m.step != reportStepDetails || m.done || m.quitting {
 		return
 	}
+	frame := m.frame()
 	width, rows := m.width, reportEditorRows
-	if m.sideBySide() {
-		width = m.mainWidth()
+	if frame.sideBySide {
+		width = frame.mainWidth
 	}
-	if body := m.bodyHeight(); body > 0 {
-		rows = body
-		if !m.sideBySide() {
+	if frame.bodyRows > 0 {
+		rows = frame.bodyRows
+		if !frame.sideBySide {
 			rows -= lipgloss.Height(m.summaryLine()) + 1
 		}
 	}
@@ -341,7 +348,7 @@ func (m reportModel) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if m.step == reportStepType {
-			m.kind = m.cursor
+			m.kindIndex = m.cursor
 			return m.advance()
 		}
 		switch m.confirmActions()[m.cursor] {
@@ -361,8 +368,8 @@ func (m reportModel) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m reportModel) submitSubject() (tea.Model, tea.Cmd) {
 	subject := strings.TrimSpace(m.subjectInput.Value())
-	if n := utf8.RuneCountInString(subject); n < 1 || n > reportSubjectLimit {
-		m.validation = "Summary must be 1–200 characters."
+	if n := utf8.RuneCountInString(subject); n < 1 || n > api.MaxReportSubjectRunes {
+		m.validation = fmt.Sprintf("Summary must be 1–%d characters.", api.MaxReportSubjectRunes)
 		return m, nil
 	}
 	m.subject = subject
@@ -371,8 +378,8 @@ func (m reportModel) submitSubject() (tea.Model, tea.Cmd) {
 
 func (m reportModel) submitDetails() (tea.Model, tea.Cmd) {
 	details := strings.TrimSpace(m.detailsInput.Value())
-	if n := utf8.RuneCountInString(details); n < 1 || n > reportDetailsLimit {
-		m.validation = "Details must be 1–10,000 characters."
+	if n := utf8.RuneCountInString(details); n < 1 || n > api.MaxReportDetailsRunes {
+		m.validation = fmt.Sprintf("Details must be 1–%d characters.", api.MaxReportDetailsRunes)
 		return m, nil
 	}
 	m.details = details
@@ -380,37 +387,65 @@ func (m reportModel) submitDetails() (tea.Model, tea.Cmd) {
 }
 
 func (m reportModel) result() ReportInput {
-	return ReportInput{Kind: reportKinds[m.kind].value, Subject: m.subject, Details: m.details}
+	return ReportInput{Kind: reportKinds[m.kindIndex].value, Subject: m.subject, Details: m.details}
 }
 
 func (m reportModel) View() string {
 	if m.done || m.quitting {
 		return ""
 	}
-	content := m.header() + m.body() + m.footer()
-	if m.sideBySide() && (m.step == reportStepDetails || m.step == reportStepConfirm) {
-		content = m.withSummaryBox(content)
+	frame := m.frame()
+	content := frame.header + m.body(frame) + frame.footer
+	if frame.sideBySide && (m.step == reportStepDetails || m.step == reportStepConfirm) {
+		content = m.withSummaryBox(frame, content)
 	}
 	return "\n" + content
 }
 
-func (m reportModel) header() string {
-	header := TitleStyle().Render("⚡ Report to Thunder Support") + "\n\n" + m.progressView() + "\n"
-	if m.step == reportStepConfirm && !m.sideBySide() {
-		// The summary box beside the menu rises into the blank row below the
-		// progress.
-		return header
-	}
-	return header + "\n"
+// reportFrame is the layout of one frame, worked out once for the view and for
+// sizing the details editor.
+type reportFrame struct {
+	header, footer string
+	// sideBySide puts the summary box beside the whole step, from the title to
+	// the controls, with the step in the mainWidth columns on its left.
+	sideBySide bool
+	mainWidth  int
+	boxWidth   int
+	bodyRows   int
 }
 
-func (m reportModel) helpText(step reportStep) string {
-	switch step {
+func (m reportModel) frame() reportFrame {
+	progress, help := m.progressView(), m.helpText()
+	// The step's column is wide enough for its progress and controls, so the
+	// summary box beside it never runs into them.
+	f := reportFrame{mainWidth: max(lipgloss.Width(progress), lipgloss.Width(help))}
+	f.sideBySide = m.terminalWidth >= f.mainWidth+reportColumnGap+reportMinBoxWidth
+	// The summary box runs from beside the step, or from beside the review's
+	// menu when it sits between the title and the controls, out to the
+	// terminal's right edge.
+	if f.sideBySide {
+		f.boxWidth = m.terminalWidth - f.mainWidth - reportColumnGap
+	} else {
+		f.boxWidth = m.terminalWidth - lipgloss.Width(m.reviewMenu()) - reportColumnGap
+	}
+	f.header = TitleStyle().Render("⚡ Report to Thunder Support") + "\n\n" + progress + "\n"
+	// The summary box beside the review's menu rises into the blank row below
+	// the progress.
+	if m.step != reportStepConfirm || f.sideBySide {
+		f.header += "\n"
+	}
+	f.footer = m.validationView() + "\n" + m.styles.Help.Render(help)
+	f.bodyRows = m.bodyRows(f)
+	return f
+}
+
+func (m reportModel) helpText() string {
+	switch m.step {
 	case reportStepSummary:
 		return "Enter: Continue  Esc: Back  Ctrl+C: Quit"
 	case reportStepDetails:
 		finish := "Review"
-		if m.skipped[reportStepConfirm] {
+		if !m.confirm {
 			finish = "Done"
 		}
 		return "Enter: New line  Ctrl+D: " + finish + "  Esc: Back  Ctrl+C: Quit"
@@ -420,35 +455,31 @@ func (m reportModel) helpText(step reportStep) string {
 	return "↑/↓: Navigate  Enter: Select  Esc: Back  Q: Quit"
 }
 
-func (m reportModel) footer() string {
-	return m.validationView() + "\n" + m.styles.Help.Render(m.helpText(m.step))
-}
-
-// bodyHeight is how many rows the step gets between the header and the
+// bodyRows is how many rows the step gets between the frame's header and
 // controls, or 0 while the terminal height is unknown. Bubble Tea drops the top
 // lines of a view taller than the terminal, so the body never takes more. The
 // first row is the blank line above the header. The review grows only as far
 // as its summary box has something to show.
-func (m reportModel) bodyHeight() int {
+func (m reportModel) bodyRows(frame reportFrame) int {
 	if m.height <= 0 {
 		return 0
 	}
-	chrome := strings.Count(m.header(), "\n") + lipgloss.Height(m.footer())
+	chrome := strings.Count(frame.header, "\n") + lipgloss.Height(frame.footer)
 	rows := m.height - 1 - chrome
 	if m.step == reportStepConfirm {
-		width, actions := m.summaryBoxWidth(), len(m.confirmActions())
-		if m.sideBySide() {
+		actions := len(m.confirmActions())
+		if frame.sideBySide {
 			// The box also runs beside the header and the controls.
-			rows = min(rows, max(actions, m.summaryBoxRows(width, rows+chrome, true)-chrome))
+			rows = min(rows, max(actions, m.summaryBoxRows(frame.boxWidth, rows+chrome, true)-chrome))
 		} else {
 			// The menu starts a row below the box's top edge.
-			rows = min(rows, max(actions+1, m.summaryBoxRows(width, rows, true)))
+			rows = min(rows, max(actions+1, m.summaryBoxRows(frame.boxWidth, rows, true)))
 		}
 	}
 	return max(reportEditorMinRows, rows)
 }
 
-func (m reportModel) body() string {
+func (m reportModel) body(frame reportFrame) string {
 	switch m.step {
 	case reportStepType:
 		var s strings.Builder
@@ -458,22 +489,22 @@ func (m reportModel) body() string {
 		}
 		return s.String()
 	case reportStepSummary:
-		return reportKinds[m.kind].summaryQuestion + "\n\n" + m.subjectInput.View() + "\n"
+		return reportKinds[m.kindIndex].summaryQuestion + "\n\n" + m.subjectInput.View() + "\n"
 	case reportStepDetails:
-		if m.sideBySide() {
+		if frame.sideBySide {
 			return m.detailsInput.View() + "\n"
 		}
 		return m.summaryLine() + "\n\n" + m.detailsInput.View() + "\n"
 	}
 	menu := m.reviewMenu()
-	if m.sideBySide() {
+	if frame.sideBySide {
 		// Keep the controls level with the box's bottom edge.
-		return menu + strings.Repeat("\n", max(0, m.bodyHeight()-len(m.confirmActions())))
+		return menu + strings.Repeat("\n", max(0, frame.bodyRows-len(m.confirmActions())))
 	}
 	// Without room beside the title and the controls, the box stays on the right
 	// between them, with the menu level with its first line.
 	actions := "\n" + strings.TrimSuffix(menu, "\n")
-	box := m.summaryBox(m.summaryBoxWidth(), m.bodyHeight(), true)
+	box := m.summaryBox(frame.boxWidth, frame.bodyRows, true)
 	return lipgloss.JoinHorizontal(lipgloss.Top, actions, strings.Repeat(" ", reportColumnGap), box) + "\n"
 }
 
@@ -486,12 +517,14 @@ func (m reportModel) reviewMenu() string {
 }
 
 func (m reportModel) progressView() string {
+	names := reportStepNames
+	if !m.confirm {
+		names = names[:reportStepConfirm]
+	}
 	var entries []string
-	for i, name := range reportStepNames {
+	for i, name := range names {
 		step := reportStep(i)
 		switch {
-		case step == reportStepConfirm && m.skipped[step]:
-			// Without a review the flow simply ends; there is nothing to show.
 		case step == m.step:
 			entries = append(entries, m.styles.Selected.Render("["+name+"]"))
 		case step < m.step || m.skipped[step]:
@@ -517,18 +550,6 @@ func (m reportModel) validationView() string {
 	return ErrorStyle().Render("✗ "+m.validation) + "\n"
 }
 
-// mainWidth is the column left of the summary box: wide enough for the step's
-// progress and controls, so the box never runs into them.
-func (m reportModel) mainWidth() int {
-	return max(lipgloss.Width(m.progressView()), lipgloss.Width(m.helpText(m.step)))
-}
-
-// sideBySide reports whether the summary box fits beside the whole step, from
-// the title to the controls.
-func (m reportModel) sideBySide() bool {
-	return m.terminalWidth >= m.mainWidth()+reportColumnGap+reportMinBoxWidth
-}
-
 // summaryLine stands in for the summary box above the details editor when the
 // box does not fit beside it.
 func (m reportModel) summaryLine() string {
@@ -537,36 +558,27 @@ func (m reportModel) summaryLine() string {
 
 // withSummaryBox runs the summary box down the right of the step, from the
 // title to the controls, and out to the terminal's right edge.
-func (m reportModel) withSummaryBox(content string) string {
-	main := theme.Body().Width(m.mainWidth()).Render(content)
+func (m reportModel) withSummaryBox(frame reportFrame, content string) string {
+	main := theme.Body().Width(frame.mainWidth).Render(content)
 	height := 0
 	if m.height > 0 {
 		height = lipgloss.Height(main)
 	}
-	box := m.summaryBox(m.summaryBoxWidth(), height, m.step == reportStepConfirm)
+	box := m.summaryBox(frame.boxWidth, height, m.step == reportStepConfirm)
 	return lipgloss.JoinHorizontal(lipgloss.Top, main, strings.Repeat(" ", reportColumnGap), box)
-}
-
-// summaryBoxWidth runs the summary box from beside the step, or from beside the
-// review's menu when it sits between the title and the controls, out to the
-// terminal's right edge.
-func (m reportModel) summaryBoxWidth() int {
-	if m.sideBySide() {
-		return m.terminalWidth - m.mainWidth() - reportColumnGap
-	}
-	return m.terminalWidth - lipgloss.Width(m.reviewMenu()) - reportColumnGap
 }
 
 // summaryBox lists the report's type, summary, supplied context and, on the
 // review, its description. Given a height, the box fills exactly that many rows.
 func (m reportModel) summaryBox(width, height int, withDescription bool) string {
 	lines, padded := m.summaryBoxLines(width, height, withDescription)
-	box := m.styles.Panel.UnsetMargins().Width(width - 2)
+	box := m.styles.Panel.UnsetMargins()
+	box = box.Width(width - box.GetHorizontalBorderSize())
 	if !padded {
 		box = box.UnsetPaddingTop().UnsetPaddingBottom()
 	}
 	if height > 0 {
-		box = box.Height(max(height, 3) - 2)
+		box = box.Height(max(height, box.GetVerticalBorderSize()+1) - box.GetVerticalBorderSize())
 	}
 	return box.Render(strings.Join(lines, "\n"))
 }
@@ -575,10 +587,12 @@ func (m reportModel) summaryBox(width, height int, withDescription bool) string 
 // show what fits.
 func (m reportModel) summaryBoxRows(width, height int, withDescription bool) int {
 	lines, padded := m.summaryBoxLines(width, height, withDescription)
+	box := m.styles.Panel.UnsetMargins()
+	rows := len(lines) + box.GetVerticalBorderSize()
 	if padded {
-		return len(lines) + 4
+		rows += box.GetVerticalPadding()
 	}
-	return len(lines) + 2
+	return rows
 }
 
 // summaryBoxLines lays out the summary box's fields in at most height rows, or
@@ -587,7 +601,7 @@ func (m reportModel) summaryBoxRows(width, height int, withDescription bool) int
 // description, which comes last for that reason.
 func (m reportModel) summaryBoxLines(width, height int, withDescription bool) (lines []string, padded bool) {
 	fields := []ReportField{
-		{Label: "Type", Value: reportKinds[m.kind].reviewName},
+		{Label: "Type", Value: reportKinds[m.kindIndex].reviewName},
 		{Label: "Summary", Value: m.subject},
 	}
 	for _, field := range m.context {
@@ -598,21 +612,22 @@ func (m reportModel) summaryBoxLines(width, height int, withDescription bool) (l
 	if withDescription {
 		fields = append(fields, ReportField{Label: "Description", Value: m.details})
 	}
-	// The border and the horizontal padding take six columns.
-	textWidth := width - 6
+	box := m.styles.Panel.UnsetMargins()
+	textWidth := width - box.GetHorizontalFrameSize()
 	above := m.boxLines(fields, textWidth, false)
 	if height <= 0 {
 		return above, true
 	}
-	height = max(height, 3)
+	// The rows inside the border, at least one.
+	rows := max(height-box.GetVerticalBorderSize(), 1)
 	switch {
-	case len(above) <= height-4:
+	case len(above) <= rows-box.GetVerticalPadding():
 		return above, true
-	case len(above) <= height-2:
+	case len(above) <= rows:
 		return above, false
 	}
 	inline := m.boxLines(fields, textWidth, true)
-	if rows := height - 2; len(inline) > rows {
+	if len(inline) > rows {
 		// Count what is hidden, unless the count would crowd out the type and
 		// summary.
 		if rows < 3 {
