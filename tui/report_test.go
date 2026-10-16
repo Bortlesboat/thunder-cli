@@ -57,6 +57,13 @@ func TestReportPreservesPastesAndValidatesBeforeReview(t *testing.T) {
 	}
 }
 
+func TestReportDetailsTakeNewLinesPastTextareaDefaultCap(t *testing.T) {
+	model := newReportModel(ReportInput{Kind: "bug", Subject: "Disk full"}, nil, true)
+	log := strings.Repeat("log\n", 150)
+	model = sendReportMsgs(model, reportText(log), reportKey(tea.KeyEnter), reportText("note"))
+	assert.Equal(t, log+"\nnote", model.detailsInput.Value())
+}
+
 func TestReportFlowKeepsTextWhenGoingBackAndEditing(t *testing.T) {
 	model := newReportModel(ReportInput{}, nil, true)
 	model = sendReportMsgs(model,

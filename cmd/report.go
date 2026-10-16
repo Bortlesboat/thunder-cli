@@ -98,20 +98,16 @@ func runReport(cmd *cobra.Command, _ []string) error {
 	if err := validateReportInput(&input, false); err != nil {
 		return err
 	}
-	preview := reportPreview{
-		DryRun:    dryRun,
-		Requester: "Resolved by the server after authentication; absent from this preview.",
-		Report:    input,
-	}
 	if dryRun {
-		printJSON(preview)
+		printJSON(reportPreview{
+			DryRun:    true,
+			Requester: "Resolved by the server after authentication; absent from this preview.",
+			Report:    input,
+		})
 		return nil
 	}
 	if !YesFlag && !interactive {
 		return usageErr("provide --subject and --details or --details-file, and use --yes to submit noninteractively; use --dry-run to preview")
-	}
-	if interactive && YesFlag {
-		printJSON(preview)
 	}
 	result, err := client.SubmitReport(cmd.Context(), input)
 	if err != nil {

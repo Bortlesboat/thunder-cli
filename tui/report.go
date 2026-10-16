@@ -90,7 +90,7 @@ type reportModel struct {
 	kindIndex int
 	// subject and details are the accepted text: as supplied, or as submitted
 	// from the inputs. Supplied text never goes into the inputs, whose SetValue
-	// rewrites tabs and control characters and cuts details at 99 lines.
+	// rewrites tabs and control characters.
 	subject      string
 	details      string
 	subjectInput textinput.Model
@@ -131,6 +131,9 @@ func newReportModel(input ReportInput, context []ReportField, confirm bool) repo
 	detailsInput.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	detailsInput.FocusedStyle.Prompt = lipgloss.NewStyle()
 	detailsInput.SetHeight(reportEditorRows)
+	// MaxHeight also caps the lines Enter can make, at 99 by default, after which
+	// Enter does nothing. The details are limited by length alone.
+	detailsInput.MaxHeight = 0
 	// A blinking cursor redraws its line twice a second, and terminals clear a
 	// mouse selection when the screen changes under it.
 	subjectInput.Cursor.SetMode(cursor.CursorStatic)
