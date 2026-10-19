@@ -63,8 +63,8 @@ func TestProgressModelDoesNotAbandonMutationOnCancellationKey(t *testing.T) {
 
 	assert.True(t, result.cancellationRequested)
 	assert.False(t, result.done)
-	assert.Nil(t, cmd)
-	assert.Contains(t, stripANSI(result.View()), "waiting for it to finish")
+	assert.NotNil(t, cmd, "in-flight notice should be printed above the view so it persists")
+	assert.NotContains(t, stripANSI(result.View()), progressInFlightNotice)
 	select {
 	case <-task.done:
 		t.Fatal("mutation unexpectedly stopped when cancellation was requested")

@@ -12,6 +12,8 @@ import (
 
 type progressResultMsg struct{}
 
+const progressInFlightNotice = "Operation is already in progress; waiting for it to finish."
+
 // progressModel is deliberately private. Command packages invoke RunProgress
 // instead of constructing a Bubble Tea program or depending on its final model
 // type.
@@ -54,8 +56,12 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "Q", "esc":
+			if m.cancellationRequested {
+				return m, nil
+			}
 			m.cancellationRequested = true
-			return m, nil
+			// Println outlives the view, which is cleared once the mutation finishes.
+			return m, tea.Println(progressInFlightNotice)
 		}
 	}
 
@@ -66,11 +72,7 @@ func (m progressModel) View() string {
 	if m.done {
 		return ""
 	}
-	message := m.message
-	if m.cancellationRequested {
-		message += "\n Operation is already in progress; waiting for it to finish."
-	}
-	return fmt.Sprintf("\n %s %s\n", m.spinner.View(), message)
+	return fmt.Sprintf("%s %s\n", m.spinner.View(), m.message)
 }
 
 // RunProgress waits for the mutation's result even if its renderer is interrupted.
@@ -95,7 +97,7 @@ func runProgress(message string, out io.Writer, action func() error, renderSucce
 		case <-task.done:
 		default:
 			if out != nil {
-				fmt.Fprintln(out, "Operation is already in progress; waiting for it to finish.")
+				fmt.Fprintln(out, progressInFlightNotice)
 			}
 		}
 	}
