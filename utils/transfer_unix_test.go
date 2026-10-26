@@ -21,21 +21,32 @@ func TestRsyncTransferPreservesKeyPath(t *testing.T) {
 	// Replace only SSH: real rsync must parse -e and complete its protocol
 	// locally, so this catches quoting errors without opening a connection.
 	ssh := `#!/bin/sh
-if [ "$1" != "-i" ] || [ "$2" != "$TNR_TEST_KEY" ]; then
-    echo "SSH identity path was split or changed" >&2
-    exit 42
-fi
-shift 2
+key_seen=
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        -i)
+            if [ "$2" != "$TNR_TEST_KEY" ]; then
+                echo "SSH identity path was split or changed" >&2
+                exit 42
+            fi
+            key_seen=1
+            shift 2
+            ;;
         -p|-o|-l) shift 2 ;;
         ubuntu@127.0.0.1|127.0.0.1)
+            if [ -z "$key_seen" ]; then
+                echo "SSH identity flag missing" >&2
+                exit 41
+            fi
             shift
             [ "$1" = "rsync" ] || exit 43
             shift
             exec "$TNR_TEST_RSYNC" "$@"
             ;;
-        *) exit 44 ;;
+        *)
+            echo "unexpected SSH argument: $1" >&2
+            exit 44
+            ;;
     esac
 done
 exit 45
