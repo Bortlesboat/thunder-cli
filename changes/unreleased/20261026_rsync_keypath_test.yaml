@@ -1,0 +1,3 @@
+kind: Internal
+body: Add a real-rsync regression test for SSH key paths with spaces and quotes (ported from thunder-cli PR 55).
+time: 2026-10-26T11:50:00-07:00
