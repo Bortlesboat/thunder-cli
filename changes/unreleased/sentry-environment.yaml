@@ -1,0 +1,3 @@
+kind: Fixed
+body: Classify released CLI error reports as production or other based on the API destination, preserve dev for development builds, and omit the API URL tag from reports.
+time: 2026-09-17T16:00:00+10:00

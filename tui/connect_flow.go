@@ -179,6 +179,9 @@ func (m ConnectFlowModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m ConnectFlowModel) View() string {
+	if m.cancelled {
+		return ""
+	}
 	var b strings.Builder
 
 	b.WriteString(m.styles.title.Render("⚡ Connecting to Thunder Instance"))
@@ -235,11 +238,6 @@ func (m ConnectFlowModel) View() string {
 		b.WriteString(errorStyleTUI.Render(fmt.Sprintf("✗ Error: Connection failed: %v", m.err)))
 		b.WriteString("\n")
 	}
-	if m.cancelled {
-		b.WriteString("\n")
-		b.WriteString(warningStyleTUI.Render("⚠ Cancelled"))
-		b.WriteString("\n")
-	}
 	if m.done {
 		b.WriteString("\n")
 		b.WriteString(successStyle.Render("✓ Connection established successfully"))
@@ -250,7 +248,7 @@ func (m ConnectFlowModel) View() string {
 	return b.String()
 }
 
-func SendPhaseUpdate(p *tea.Program, phaseIndex int, status PhaseStatus, message string, duration time.Duration) {
+func SendPhaseUpdate(p *Program, phaseIndex int, status PhaseStatus, message string, duration time.Duration) {
 	if p != nil {
 		p.Send(PhaseUpdateMsg{
 			PhaseIndex: phaseIndex,
@@ -261,7 +259,7 @@ func SendPhaseUpdate(p *tea.Program, phaseIndex int, status PhaseStatus, message
 	}
 }
 
-func SendPhaseComplete(p *tea.Program, phaseIndex int, duration time.Duration) {
+func SendPhaseComplete(p *Program, phaseIndex int, duration time.Duration) {
 	if p != nil {
 		p.Send(PhaseCompleteMsg{
 			PhaseIndex: phaseIndex,
@@ -270,7 +268,7 @@ func SendPhaseComplete(p *tea.Program, phaseIndex int, duration time.Duration) {
 	}
 }
 
-func SendPhaseSkipped(p *tea.Program, phaseIndex int, message string) {
+func SendPhaseSkipped(p *Program, phaseIndex int, message string) {
 	if p != nil {
 		p.Send(PhaseUpdateMsg{
 			PhaseIndex: phaseIndex,
@@ -280,7 +278,7 @@ func SendPhaseSkipped(p *tea.Program, phaseIndex int, message string) {
 	}
 }
 
-func SendConnectComplete(p *tea.Program) {
+func SendConnectComplete(p *Program) {
 	if p != nil {
 		p.Send(ConnectCompleteMsg{})
 	}
@@ -288,7 +286,7 @@ func SendConnectComplete(p *tea.Program) {
 
 func (m ConnectFlowModel) Cancelled() bool { return m.cancelled }
 
-func SendConnectError(p *tea.Program, err error) {
+func SendConnectError(p *Program, err error) {
 	if p != nil {
 		p.Send(ConnectErrorMsg{Err: err})
 	}

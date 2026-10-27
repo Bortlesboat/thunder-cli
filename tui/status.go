@@ -1,12 +1,10 @@
 package tui
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
 	"sort"
 	"strings"
 	"time"
@@ -768,18 +766,14 @@ func RunStatus(client *api.Client, monitoring bool, instances []api.Instance, ve
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	p := tea.NewProgram(
+	p := NewProgram(
 		m,
-		tea.WithContext(ctx),
 		tea.WithOutput(os.Stdout),
 	)
 
 	disableResizeSignal()
 
-	if _, err := p.Run(); err != nil {
+	if _, err := RunProgram(p); err != nil {
 		return fmt.Errorf("error running status TUI: %w", err)
 	}
 

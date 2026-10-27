@@ -3,21 +3,30 @@
 package autoupdate
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
+
+	"golang.org/x/term"
 )
 
 type unixInstaller struct{}
 
 func (u unixInstaller) Install(ctx context.Context, exe, newBinary, version string, src Source) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dir := filepath.Dir(exe)
 	if !dirWritable(dir) {
-		if err := installWithSudo(newBinary, exe, version); err != nil {
+		if err := installWithSudo(ctx, newBinary, exe, version); err != nil {
 			return err
 		}
 		return nil
@@ -32,7 +41,7 @@ func (u unixInstaller) Install(ctx context.Context, exe, newBinary, version stri
 	}
 	if err := os.Rename(tmpTarget, exe); err != nil {
 		if isPermissionError(err) {
-			if err := installWithSudo(newBinary, exe, version); err != nil {
+			if err := installWithSudo(ctx, newBinary, exe, version); err != nil {
 				return err
 			}
 			return nil
@@ -43,7 +52,10 @@ func (u unixInstaller) Install(ctx context.Context, exe, newBinary, version stri
 	return nil
 }
 
-func installWithSudo(newBinary, exe, version string) error {
+func installWithSudo(ctx context.Context, newBinary, exe, version string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	tempDir := filepath.Dir(newBinary)
 	tmpFile, err := os.CreateTemp(tempDir, "tnr-sudo-*")
 	if err != nil {
@@ -63,12 +75,26 @@ func installWithSudo(newBinary, exe, version string) error {
 		return err
 	}
 
-	cmd := exec.Command("sudo", "mv", tmpTarget, exe)
+	args := []string{"mv", tmpTarget, exe}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		args = append([]string{"-n"}, args...)
+	}
+	fmt.Fprintf(os.Stderr, "Updating %s requires administrator permission.\n", exe)
+	cmd := exec.CommandContext(ctx, "sudo", args...)
+	cmd.WaitDelay = time.Second
+	var stderr bytes.Buffer
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("sudo install failed: %w", err)
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		detail := strings.TrimSpace(stderr.String())
+		if detail != "" {
+			detail = ": " + detail
+		}
+		return fmt.Errorf("sudo install failed: installing %q: %w%s\nRun 'tnr update' in an interactive terminal with an account allowed to use sudo, or reinstall tnr in a user-writable directory", exe, err, detail)
 	}
 	fmt.Printf("Successfully updated to version %s\n", version)
 	return nil

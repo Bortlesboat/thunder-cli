@@ -24,11 +24,21 @@ type SessionConfig struct {
 
 // RunInteractiveSession starts a PTY-allocated shell session with local port forwarding.
 // It blocks until the session ends (user exits shell, connection drops, or ctx is cancelled).
-func RunInteractiveSession(ctx context.Context, cfg SessionConfig) error {
+func RunInteractiveSession(ctx context.Context, cfg SessionConfig) (resultErr error) {
+	defer func(parent context.Context) {
+		if err := parent.Err(); err != nil {
+			resultErr = err
+		}
+	}(ctx)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	sshClient := cfg.Client.GetClient()
+	stopClose := context.AfterFunc(ctx, func() { sshClient.Close() })
+	defer stopClose()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// Start port forwarding before raw mode so bind errors print cleanly.
 	for _, port := range cfg.Ports {
@@ -105,6 +115,7 @@ func RunInteractiveSession(ctx context.Context, cfg SessionConfig) error {
 	go pipeStdin(cfg.Stdin, sessionStdin)
 
 	err = session.Wait()
+	stopClose()
 	cancel()
 	wg.Wait()
 

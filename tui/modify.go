@@ -825,8 +825,8 @@ func (m modifyModel) renderConfirmationStep() string {
 }
 
 func runModifyModel(m tea.Model) (*ModifyConfig, error) {
-	p := tea.NewProgram(m)
-	finalModel, err := p.Run()
+	p := NewProgram(m)
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return nil, fmt.Errorf("error running interactive modify: %w", err)
 	}
@@ -863,9 +863,9 @@ func RunModifyHybrid(client *api.Client, instance *api.Instance, specs *utils.Sp
 func RunModifyInstanceSelector(client *api.Client, instances []api.Instance) (*api.Instance, error) {
 	InitCommonStyles(os.Stdout)
 	m := newModifyInstanceSelectorModel(instances)
-	p := tea.NewProgram(m)
+	p := NewProgram(m)
 
-	finalModel, err := p.Run()
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return nil, fmt.Errorf("error running instance selector: %w", err)
 	}

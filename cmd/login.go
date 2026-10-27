@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/getsentry/sentry-go"
 	"github.com/spf13/cobra"
 
 	"github.com/Thunder-Compute/thunder-cli/api"
@@ -383,6 +383,9 @@ func useManualLogin() bool {
 }
 
 func runInteractiveLogin() error {
+	sentry.ConfigureScope(func(scope *sentry.Scope) {
+		scope.SetTag("api_url", getAPIURL())
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	session := &loginSession{ctx: ctx}
@@ -440,7 +443,7 @@ func runInteractiveLogin() error {
 		}
 		return credential.Token, nil
 	}, cancel)
-	p := tea.NewProgram(model)
+	p := tui.NewProgram(model)
 	if !manual {
 		go func() {
 			timer := time.NewTimer(5 * time.Minute)
@@ -464,7 +467,7 @@ func runInteractiveLogin() error {
 		}
 	}
 
-	finalModel, err := p.Run()
+	finalModel, err := tui.RunProgram(p)
 	if err != nil {
 		return fmt.Errorf("login interface error: %w", err)
 	}
@@ -476,7 +479,6 @@ func runInteractiveLogin() error {
 		return nil
 	}
 	if model.State() == tui.LoginStateCancelled {
-		PrintWarningSimple("User cancelled authentication")
 		return nil
 	}
 	return usageErr("authentication failed")

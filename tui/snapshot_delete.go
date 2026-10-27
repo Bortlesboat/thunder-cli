@@ -111,8 +111,8 @@ func (m snapshotDeleteModel) handleEnter() (tea.Model, tea.Cmd) {
 			m.step = snapshotDeleteStepComplete
 			return m, tea.Quit
 		}
-		m.step = snapshotDeleteStepSelect
-		m.cursor = 0
+		m.quitting = true
+		return m, tea.Quit
 	}
 
 	return m, nil
@@ -231,8 +231,8 @@ func (m snapshotDeleteModel) View() string {
 func RunSnapshotDeleteInteractive(client *api.Client, snapshots api.ListSnapshotsResponse) (*api.Snapshot, error) {
 	InitCommonStyles(os.Stdout)
 	m := NewSnapshotDeleteModel(client, snapshots)
-	p := tea.NewProgram(m)
-	finalModel, err := p.Run()
+	p := NewProgram(m)
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return nil, fmt.Errorf("error running TUI: %w", err)
 	}

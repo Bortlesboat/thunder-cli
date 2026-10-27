@@ -125,8 +125,8 @@ func (m deleteModel) handleEnter() (tea.Model, tea.Cmd) {
 			m.step = deleteStepComplete
 			return m, tea.Quit
 		}
-		m.step = deleteStepSelect
-		m.cursor = 0
+		m.quitting = true
+		return m, tea.Quit
 	}
 
 	return m, nil
@@ -248,8 +248,8 @@ func (m deleteModel) View() string {
 func RunDeleteInteractive(client *api.Client, instances []api.Instance) (*api.Instance, error) {
 	InitCommonStyles(os.Stdout)
 	m := NewDeleteModel(client, instances)
-	p := tea.NewProgram(m)
-	finalModel, err := p.Run()
+	p := NewProgram(m)
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return nil, fmt.Errorf("error running TUI: %w", err)
 	}

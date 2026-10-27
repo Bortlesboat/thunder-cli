@@ -1,10 +1,8 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"sort"
 	"strings"
 	"time"
@@ -305,15 +303,11 @@ func (m snapshotListModel) formatStatus(status string, width int) string {
 }
 
 func RunSnapshotList(client *api.Client, monitoring bool, snapshots api.ListSnapshotsResponse) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	InitCommonStyles(os.Stdout)
 
 	m := newSnapshotListModel(client, monitoring, snapshots)
-	p := tea.NewProgram(
+	p := NewProgram(
 		m,
-		tea.WithContext(ctx),
 		tea.WithOutput(os.Stdout),
 	)
 
@@ -321,7 +315,7 @@ func RunSnapshotList(client *api.Client, monitoring bool, snapshots api.ListSnap
 		disableResizeSignal()
 	}
 
-	if _, err := p.Run(); err != nil {
+	if _, err := RunProgram(p); err != nil {
 		return fmt.Errorf("error running snapshot list TUI: %w", err)
 	}
 

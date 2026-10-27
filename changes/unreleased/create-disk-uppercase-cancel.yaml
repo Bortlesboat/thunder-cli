@@ -1,0 +1,3 @@
+kind: Fixed
+body: Allow uppercase Q to cancel instance creation at the disk-size step.
+time: 2026-09-17T12:00:00+10:00

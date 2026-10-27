@@ -68,6 +68,9 @@ func NewClient(token, baseURL string) *Client {
 }
 
 func NewClientWithTokenSource(tokenSource TokenSource, baseURL string) *Client {
+	sentry.ConfigureScope(func(scope *sentry.Scope) {
+		scope.SetTag("api_url", baseURL)
+	})
 	return &Client{
 		baseURL:                    baseURL,
 		tokenSource:                tokenSource,

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"runtime"
@@ -52,12 +53,17 @@ func initSentry() error {
 		return nil
 	}
 
-	// Load config for user context only
 	cfg, _ := cmd.LoadConfig()
+	apiURL := os.Getenv("TNR_API_URL")
+	if cfg != nil {
+		apiURL = cfg.APIURL
+	} else if apiURL == "" {
+		apiURL = cmd.DefaultAPIURL
+	}
 
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:              version.SentryDSN,
-		Environment:      getEnvironment(),
+		Environment:      getEnvironment(apiURL),
 		Release:          fmt.Sprintf("thunder-cli@%s", version.BuildVersion),
 		Debug:            false,
 		AttachStacktrace: true,
@@ -90,19 +96,31 @@ func initSentry() error {
 		scope.SetTag("build_commit", version.BuildCommit)
 		scope.SetTag("service", "thunder-cli")
 		scope.SetTag("instance_id", getInstanceID())
-		if cfg != nil {
-			scope.SetTag("api_url", cfg.APIURL)
-		}
+		scope.SetTag("api_url", apiURL)
+		// Login can switch API destinations after Sentry is initialized.
+		scope.AddEventProcessor(func(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+			event.Environment = getEnvironment(event.Tags["api_url"])
+			delete(event.Tags, "api_url")
+			return event
+		})
 	})
 
 	return nil
 }
 
-func getEnvironment() string {
+func getEnvironment(apiURL string) string {
 	if version.BuildVersion == "dev" {
 		return "dev"
 	}
-	return "production"
+	parsed, err := url.Parse(apiURL)
+	if err != nil || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "other"
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "api.thundercompute.com" {
+		return "production"
+	}
+	return "other"
 }
 
 func getInstanceID() string {

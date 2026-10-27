@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -129,10 +130,10 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 		return fmt.Errorf("failed to load saved credentials: %w", err)
 	}
 
-	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	ctx, cancel := context.WithCancel(signalCtx)
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(signalCtx)
+	defer cancel(nil)
 
 	// Start a Sentry transaction so the trace ID propagates to API calls,
 	// enabling end-to-end correlation between CLI and server spans.
@@ -155,12 +156,12 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 		return e
 	}); err != nil {
 		if ctx.Err() != nil {
-			return nil
+			return context.Cause(ctx)
 		}
 		return fmt.Errorf("failed to list instances: %w", err)
 	}
 	if ctx.Err() != nil {
-		return nil
+		return context.Cause(ctx)
 	}
 	if len(instances) == 0 {
 		if JSONOutput {
@@ -177,7 +178,6 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 		instanceID, err = tui.RunConnectSelectWithInstances(instances)
 		if err != nil {
 			if errors.Is(err, tui.ErrCancelled) {
-				PrintWarningSimple("User cancelled instance connection")
 				return nil
 			}
 			if errors.Is(err, tui.ErrNoRunningInstances) {
@@ -244,30 +244,27 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 		}
 	}
 
-	var p *tea.Program
+	var p *tui.Program
 	var tuiDone chan error
-	var wasCancelled bool
 
 	if interactive {
 		tui.InitCommonStyles(os.Stdout)
 
 		flowModel := tui.NewConnectFlowModel(instanceID)
-		p = tea.NewProgram(
+		p = tui.NewProgram(
 			flowModel,
-			tea.WithContext(ctx),
 			tea.WithOutput(os.Stdout),
 		)
 
 		tuiDone = make(chan error, 1)
 
 		go func() {
-			finalModel, err := p.Run()
-			if fm, ok := finalModel.(tui.ConnectFlowModel); ok && fm.Cancelled() {
-				wasCancelled = true
-				cancel()
-			}
+			finalModel, err := tui.RunProgram(p)
 			if err != nil {
+				cancel(err)
 				tuiDone <- err
+			} else if fm, ok := finalModel.(tui.ConnectFlowModel); ok && fm.Cancelled() {
+				cancel(tui.ErrCancelled)
 			}
 			close(tuiDone)
 		}()
@@ -277,26 +274,21 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 
 	shutdownTUI := func() {
 		if p != nil {
-			stop()
+			if ctx.Err() != nil {
+				p.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+			}
 			tui.ShutdownProgram(p, tuiDone, os.Stdout)
 		}
 	}
 
+	defer shutdownTUI()
+
 	checkCancelled := func() bool {
-		select {
-		case <-ctx.Done():
-			return true
-		default:
-			if wasCancelled {
-				stop()
-				return true
-			}
-			return false
-		}
+		return ctx.Err() != nil
 	}
 
 	if checkCancelled() {
-		return nil
+		return context.Cause(ctx)
 	}
 
 	phase3Start := time.Now()
@@ -318,7 +310,7 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 	})
 
 	if checkCancelled() {
-		return nil
+		return context.Cause(ctx)
 	}
 	if !keyExists {
 		sentry.AddBreadcrumb(&sentry.Breadcrumb{
@@ -333,7 +325,7 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 		tui.SendPhaseUpdate(p, 0, tui.PhaseInProgress, "Generating new SSH key...", 0)
 		keyResp, err := client.AddSSHKeyCtx(ctx, instanceID)
 		if checkCancelled() {
-			return nil
+			return context.Cause(ctx)
 		}
 		if err != nil {
 			sentry.AddBreadcrumb(&sentry.Breadcrumb{
@@ -413,11 +405,11 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 	})
 
 	if checkCancelled() {
-		return nil
+		return context.Cause(ctx)
 	}
 	if err := utils.WaitForTCPPort(ctx, instance.GetIP(), port, 120*time.Second); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil
+		if checkCancelled() {
+			return context.Cause(ctx)
 		}
 		sentry.AddBreadcrumb(&sentry.Breadcrumb{
 			Category: "connect",
@@ -434,13 +426,18 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 	}
 
 	if checkCancelled() {
-		return nil
+		return context.Cause(ctx)
 	}
 
 	logProgress(fmt.Sprintf("Connecting to %s:%d...", instance.GetIP(), port))
 	tui.SendPhaseUpdate(p, 1, tui.PhaseInProgress, fmt.Sprintf("Connecting to %s:%d...", instance.GetIP(), port), 0)
 
 	var sshClient *utils.SSHClient
+	defer func() {
+		if sshClient != nil {
+			sshClient.Close()
+		}
+	}()
 	progressCallback := func(info utils.SSHRetryInfo) {
 		switch info.Status {
 		case utils.SSHStatusDialing:
@@ -463,7 +460,7 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 	}
 
 	if checkCancelled() {
-		return nil
+		return context.Cause(ctx)
 	}
 
 	sentry.AddBreadcrumb(&sentry.Breadcrumb{
@@ -489,7 +486,7 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 		sshClient, err = utils.RobustSSHConnectWithOptions(ctx, instance.GetIP(), keyFile, port, 60, progressCallback, sshConnectOpts)
 	}
 	if checkCancelled() {
-		return nil
+		return context.Cause(ctx)
 	}
 
 	// Handle persistent auth failure (likely deleted ~/.ssh on instance) or other auth errors
@@ -515,7 +512,7 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 
 		keyResp, keyErr := client.AddSSHKeyCtx(ctx, instanceID)
 		if checkCancelled() {
-			return nil
+			return context.Cause(ctx)
 		}
 		if keyErr != nil {
 			sentry.AddBreadcrumb(&sentry.Breadcrumb{
@@ -577,7 +574,7 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 		}
 
 		if checkCancelled() {
-			return nil
+			return context.Cause(ctx)
 		}
 		// Use persistent auth detection on the retry: if auth still fails
 		// consistently after key regeneration, the instance is likely in
@@ -592,7 +589,7 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 		}
 		sshClient, err = utils.RobustSSHConnectWithOptions(ctx, instance.GetIP(), keyFile, port, 120, retryCallback, retryOpts)
 		if checkCancelled() {
-			return nil
+			return context.Cause(ctx)
 		}
 		if err != nil {
 			sentry.AddBreadcrumb(&sentry.Breadcrumb{
@@ -666,7 +663,7 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 	tui.SendConnectComplete(p)
 
 	if checkCancelled() {
-		return nil
+		return context.Cause(ctx)
 	}
 
 	if interactive {
@@ -674,18 +671,18 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 		case err := <-tuiDone:
 			if err != nil {
 				if checkCancelled() {
-					return nil
+					return context.Cause(ctx)
 				}
 				shutdownTUI()
 				return fmt.Errorf("TUI error: %w", err)
 			}
 		case <-ctx.Done():
 			shutdownTUI()
-			return nil
+			return context.Cause(ctx)
 		}
 
 		if checkCancelled() {
-			return nil
+			return context.Cause(ctx)
 		}
 	}
 
@@ -712,8 +709,8 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 	runner := resolveSessionRunner(opts)
 	err = runner(ctx, sessionCfg)
 
-	if sshClient != nil {
-		sshClient.Close()
+	if checkCancelled() {
+		return context.Cause(ctx)
 	}
 
 	// Remote shell exit codes and connection drops are not connect errors.
@@ -723,11 +720,6 @@ func runConnectWithOptions(instanceID string, tunnelPortsStr []string, debug boo
 		if !errors.As(err, &exitErr) && !errors.As(err, &exitMissing) {
 			return fmt.Errorf("SSH session failed: %w", err)
 		}
-	}
-
-	if wasCancelled {
-		PrintWarningSimple("User cancelled instance connection")
-		return nil
 	}
 
 	return nil

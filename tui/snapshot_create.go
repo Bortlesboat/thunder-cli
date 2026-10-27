@@ -367,8 +367,8 @@ func (m snapshotCreateModel) View() string {
 func RunSnapshotCreateInteractive(client *api.Client) (*SnapshotCreateConfig, error) {
 	InitCommonStyles(os.Stdout)
 	m := NewSnapshotCreateModel(client)
-	p := tea.NewProgram(m)
-	finalModel, err := p.Run()
+	p := NewProgram(m)
+	finalModel, err := RunProgram(p)
 	if err != nil {
 		return nil, fmt.Errorf("error running TUI: %w", err)
 	}

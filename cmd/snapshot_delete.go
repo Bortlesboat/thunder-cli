@@ -67,7 +67,6 @@ func runSnapshotDelete(args []string) error {
 		selectedSnapshot, err = tui.RunSnapshotDeleteInteractive(client, snapshots)
 		if err != nil {
 			if errors.Is(err, tui.ErrCancelled) {
-				PrintWarningSimple("User cancelled delete process")
 				return nil
 			}
 			return err
@@ -116,7 +115,6 @@ func runSnapshotDelete(args []string) error {
 			fmt.Scanln(&confirmation)
 
 			if confirmation != "yes" && confirmation != "y" {
-				PrintWarningSimple("Deletion cancelled")
 				return nil
 			}
 		}
