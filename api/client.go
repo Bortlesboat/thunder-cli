@@ -13,6 +13,7 @@ import (
 
 	"github.com/Thunder-Compute/thunder-cli/internal/clierr"
 	"github.com/Thunder-Compute/thunder-cli/pkg/types"
+	"github.com/getsentry/sentry-go"
 	sentryhttpclient "github.com/getsentry/sentry-go/httpclient"
 )
 
