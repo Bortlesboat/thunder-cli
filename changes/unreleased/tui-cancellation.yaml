@@ -1,3 +1,0 @@
-kind: Fixed
-body: Cancel menus and loading indicators quietly, handle keyboard and signal interruptions consistently, and wait for submitted updates to report their actual result.
-time: 2026-09-17T12:00:00+10:00

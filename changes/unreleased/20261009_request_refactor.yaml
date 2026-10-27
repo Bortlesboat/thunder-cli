@@ -1,3 +1,0 @@
-kind: Internal
-body: Separate authenticated HTTP transport from ordinary API and support-report response handling.
-time: 2026-10-09T13:00:00+11:00

@@ -5,6 +5,30 @@ change-fragment process was adopted remain available on the
 [GitHub releases page](https://github.com/Thunder-Compute/thunder-cli/releases).
 
 
+## v2.2.0 - 2026-10-27
+
+### Added
+- Send bug reports and product feedback to Thunder support with tnr report.
+
+### Fixed
+- Use ubuntu and the selected private key in generated SSH commands, and bypass local SSH agents for manual connections and file transfers to prevent hangs.
+- Restore the inline terminal interface from v2.0.71 for instance creation, status monitoring, and loading indicators, keeping status changes in one live table.
+- Cancel menus and loading indicators quietly, handle keyboard and signal interruptions consistently, and wait for submitted updates to report their actual result.
+- Close interrupted SSH sessions reliably and clear connection progress when cancelled. Interrupted file transfers now exit with code 130 and warn that destination files may be incomplete.
+- Allow uppercase Q to cancel instance creation at the disk-size step.
+- Explain self-update permission failures with sudo's diagnostic and recovery steps, avoid password prompts without an interactive terminal, and honor the update timeout during installation.
+- Exit quietly when choosing No, Cancel in instance and snapshot deletion menus; use Esc to return to selection.
+- Classify released CLI error reports as production or other based on the API destination, preserve dev for development builds, and omit the API URL tag from reports.
+- Keep JSON command output free of terminal control sequences during startup.
+
+<!-- Internal changes -->
+<!-- Add an opt-in local preview for deletion menus using sample data and disabled deletion requests. -->
+<!-- Separate authenticated HTTP transport from ordinary API and support-report response handling. -->
+<!-- Add a real-rsync regression test for SSH key paths with spaces and quotes (ported from thunder-cli PR 55). -->
+<!-- Restore the missing Sentry import so the CLI builds after the environment classification change. -->
+
+**Full Changelog**: https://github.com/Thunder-Compute/thunder-cli/compare/v2.1.0...v2.2.0
+
 ## v2.1.0 - 2026-09-16
 
 ### Added

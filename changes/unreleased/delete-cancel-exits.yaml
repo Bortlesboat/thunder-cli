@@ -1,3 +1,0 @@
-kind: Fixed
-body: Exit quietly when choosing No, Cancel in instance and snapshot deletion menus; use Esc to return to selection.
-time: 2026-09-17T16:00:00+10:00

@@ -1,3 +1,0 @@
-kind: Fixed
-body: Keep JSON command output free of terminal control sequences during startup.
-time: 2026-10-12T12:00:00+11:00

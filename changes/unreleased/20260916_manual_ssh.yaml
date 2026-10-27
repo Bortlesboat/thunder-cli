@@ -1,3 +1,0 @@
-kind: Fixed
-body: Use ubuntu and the selected private key in generated SSH commands, and bypass local SSH agents for manual connections and file transfers to prevent hangs.
-time: 2026-09-16T14:00:00+10:00
